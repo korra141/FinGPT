@@ -12,9 +12,7 @@ from utils import parse_model_name, load_dataset, calc_metrics
 
 def run_inference(args):
 
-    token = "REDACTED_HF_TOKEN"
-    if token is None:
-        token = os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
+    token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
 
     model_name = parse_model_name(args.base_model, args.from_remote)
 
@@ -102,6 +100,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_length", default=4096, type=int)
     parser.add_argument("--num_samples", default=50, type=int, help="Number of test samples to evaluate, -1 for all")
     parser.add_argument("--from_remote", default=True, type=bool)
+    parser.add_argument("--hf_token", default=None, type=str, help="HuggingFace API token (or set HF_TOKEN env var)")
     parser.add_argument("--load_in_4bit", action="store_true", help="Load model in 4-bit quantization (~4GB VRAM)")
     parser.add_argument("--load_in_8bit", action="store_true", help="Load model in 8-bit quantization (~7GB VRAM)")
     parser.add_argument("--wandb", action="store_true", help="Log metrics to wandb")

@@ -86,9 +86,7 @@ def main(args):
 
     model_name = parse_model_name(args.base_model, args.from_remote)
     
-    token = "REDACTED_HF_TOKEN"
-    if token is None:
-        token = os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
+    token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
 
     # load model
     model = AutoModelForCausalLM.from_pretrained(
@@ -228,7 +226,8 @@ if __name__ == "__main__":
     parser.add_argument("--instruct_template", default='default')
     parser.add_argument("--evaluation_strategy", default='steps', type=str)    
     parser.add_argument("--eval_steps", default=0.1, type=float)    
-    parser.add_argument("--from_remote", default=True, type=bool)    
+    parser.add_argument("--from_remote", default=True, type=bool)
+    parser.add_argument("--hf_token", default=None, type=str, help="HuggingFace API token (or set HF_TOKEN env var)")
     args = parser.parse_args()
     
     wandb.login()

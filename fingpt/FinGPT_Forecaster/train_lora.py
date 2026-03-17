@@ -22,12 +22,12 @@ from peft import (
     LoraConfig,
     get_peft_model,
     get_peft_model_state_dict,
-    prepare_model_for_int8_training,
+    # prepare_model_for_int8_training,
     set_peft_model_state_dict,   
 )
 
 # Replace with your own api_key and project name
-os.environ['WANDB_API_KEY'] = ''    # TODO: Replace with your environment variable
+# os.environ['WANDB_API_KEY'] = 'REDACTED_WANDB_KEY'  
 os.environ['WANDB_PROJECT'] = 'fingpt-forecaster'
 
 
@@ -80,30 +80,43 @@ class GenerationEvalCallback(TrainerCallback):
 
 
 def main(args):
-        
+
+    run = wandb.init(project=os.environ['WANDB_PROJECT'], name=args.run_name)
+    args.run_name = f"{args.run_name}-{run.id}"
+
     model_name = parse_model_name(args.base_model, args.from_remote)
     
+    token = "REDACTED_HF_TOKEN"
+    if token is None:
+        token = os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
+
     # load model
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        # load_in_8bit=True,
-        trust_remote_code=True
+        # load_in_8bit=True,  # incompatible with MIG slices (cublasLt error)
+        torch_dtype=torch.float16,
+        device_map="auto",
+        trust_remote_code=True,
+        token=token
     )
     if args.local_rank == 0:
         print(model)
     
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    # tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, token=token)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
     
     # load data
-    dataset_fname = "./data/" + args.dataset
+    # dataset_fname = "./data/" + args.dataset
+    dataset_fname = args.dataset
     dataset_list = load_dataset(dataset_fname, args.from_remote)
     
     dataset_train = datasets.concatenate_datasets([d['train'] for d in dataset_list]).shuffle(seed=42)
     
     if args.test_dataset:
         test_dataset_fname = "./data/" + args.test_dataset
+        test_dataset_fname = args.test_dataset
         dataset_list = load_dataset(test_dataset_fname, args.from_remote)
             
     dataset_test = datasets.concatenate_datasets([d['test'] for d in dataset_list])
@@ -138,13 +151,12 @@ def main(args):
         save_steps=args.eval_steps,
         eval_steps=args.eval_steps,
         fp16=True,
-        deepspeed=args.ds_config,
         evaluation_strategy=args.evaluation_strategy,
         remove_unused_columns=False,
         report_to='wandb',
         run_name=args.run_name
     )
-    
+    # deepspeed=args.ds_config, 
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
     model.is_parallelizable = True
@@ -201,13 +213,13 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", default='local-test', type=str)
     parser.add_argument("--dataset", required=True, type=str)
     parser.add_argument("--test_dataset", type=str)
-    parser.add_argument("--base_model", required=True, type=str, choices=['chatglm2', 'llama2'])
+    parser.add_argument("--base_model", required=True, type=str, choices=['chatglm2', 'llama2', 'llama3'])
     parser.add_argument("--max_length", default=512, type=int)
     parser.add_argument("--batch_size", default=4, type=int, help="The train batch size per device")
     parser.add_argument("--learning_rate", default=1e-4, type=float, help="The learning rate")
     parser.add_argument("--weight_decay", default=0.01, type=float, help="weight decay")
     parser.add_argument("--num_epochs", default=8, type=float, help="The training epochs")
-    parser.add_argument("--num_workers", default=8, type=int, help="dataloader workers")
+    parser.add_argument("--num_workers", default=4, type=int, help="dataloader workers")
     parser.add_argument("--log_interval", default=20, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=8, type=int)
     parser.add_argument("--warmup_ratio", default=0.05, type=float)
@@ -216,7 +228,7 @@ if __name__ == "__main__":
     parser.add_argument("--instruct_template", default='default')
     parser.add_argument("--evaluation_strategy", default='steps', type=str)    
     parser.add_argument("--eval_steps", default=0.1, type=float)    
-    parser.add_argument("--from_remote", default=False, type=bool)    
+    parser.add_argument("--from_remote", default=True, type=bool)    
     args = parser.parse_args()
     
     wandb.login()

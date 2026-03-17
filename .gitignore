@@ -136,6 +136,15 @@ fingpt/FinGPT_sentiment/instruct-FinGPT/run.sh
 fingpt/FinGPT_sentiment/instruct-FinGPT/checkpoints
 fingpt/FinGPT_sentiment/instruct-FinGPT/ds_results_all_10_v2_1.*
 FinGPT_Training_LoRA_with_Chatglm2_6b_for_beginners.ipynb
+fingpt/FinGPT_Forecaster/.bash_history
+fingpt/FinGPT_Forecaster/.netrc
+fingpt/FinGPT_Forecaster/.python_history
+fingpt/FinGPT_Forecaster/finetuned_models/
+fingpt/FinGPT_Forecaster/fingpt_forecaster.sif
+fingpt/FinGPT_Forecaster/fingpt_forecaster/
+fingpt/FinGPT_Forecaster/hf_cache/
+fingpt/FinGPT_Forecaster/overlay.img
+fingpt/FinGPT_Forecaster/wandb/
 
 # Benchmark data
 fingpt/FinGPT_Benchmark/data/*/**

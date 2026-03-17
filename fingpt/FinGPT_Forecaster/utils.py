@@ -50,6 +50,8 @@ def parse_model_name(name, from_remote=False):
         return 'THUDM/chatglm2-6b' if from_remote else 'base_models/chatglm2-6b'
     elif name == 'llama2':
         return 'meta-llama/Llama-2-7b-chat-hf' # if from_remote else 'base_models/Llama-2-7b-chat-hf'
+    elif name == 'llama3':
+        return 'meta-llama/Llama-3.1-8B' # if from_remote else 'base_models/Llama-3-7b-chat-hf'
     else:
         raise ValueError(f"Undefined base model {name}")
         

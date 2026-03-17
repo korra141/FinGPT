@@ -1,0 +1,83 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:23.03-py3
+
+%labels
+    Author: FinGPT
+    Version: 1.0
+    Description: Singularity container for FinGPT_Forecaster
+
+%help   
+    This container includes all dependencies for FinGPT_Forecaster with PyTorch,
+    Transformers, PEFT, and financial data libraries.
+
+%environment
+    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    export PYTHONUNBUFFERED=1
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+    export HF_HOME=/mnt/.cache/huggingface
+
+%post
+    # Update system packages
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        python3.10 \
+        python3-pip \
+        python3-dev \
+        git \
+        wget \
+        curl \
+        ca-certificates \
+        build-essential \
+        libssl-dev \
+        libffi-dev \
+        && rm -rf /var/lib/apt/lists/*
+
+    apt-get install libopenmpi-dev openmpi-bin
+
+    # Upgrade pip
+    python3 -m pip install --upgrade pip setuptools wheel
+
+
+    # 1. Create the certificate directory
+    mkdir -p /etc/pki/tls/certs
+    
+    # 2. Create the symbolic link for the CA bundle
+    # Note: Use -f (force) to ensure it creates the link even if a file exists
+    # ln -sf /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt
+
+    # Install Python dependencies from requirements.txt
+    pip install --no-cache-dir \
+        "numpy<2.0.0" \
+        transformers==4.32.0 \
+        peft==0.5.0 \
+        pandas \
+        yfinance \
+        finnhub-python \
+        nvidia-ml-py3 \
+        datasets==2.14.5 \
+        pyarrow==12.0.1 \
+        accelerate==0.21.0 \
+        
+
+    # Additional useful packages
+    pip install --no-cache-dir \
+        jupyter \
+        ipython \
+        matplotlib \
+        numpy<2.0.0\
+        scikit-learn \
+        tqdm
+
+
+
+    pip install tensorboard wandb rouge_score mpi4py
+
+
+%runscript
+    exec python3 "$@"
+
+%startscript
+    exec python3 "$@"

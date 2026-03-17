@@ -1,0 +1,81 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:23.03-py3
+
+%labels
+    Author: FinGPT
+    Version: 2.0
+    Description: Singularity container for FinGPT_Forecaster with Llama 3 support (CUDA 11.8)
+
+%help
+    This container includes all dependencies for FinGPT_Forecaster with PyTorch,
+    Transformers >= 4.40 (required for Llama 3 rope_scaling), PEFT, and financial data libraries.
+
+%environment
+    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    export PYTHONUNBUFFERED=1
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+    export HF_HOME=/mnt/.cache/huggingface
+
+%post
+    # Update system packages
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        python3.10 \
+        python3-pip \
+        python3-dev \
+        git \
+        wget \
+        curl \
+        ca-certificates \
+        build-essential \
+        libssl-dev \
+        libffi-dev \
+        && rm -rf /var/lib/apt/lists/*
+
+    apt-get install -y libopenmpi-dev openmpi-bin
+
+    # Upgrade pip
+    python3 -m pip install --upgrade pip setuptools wheel
+
+    # Create the certificate directory
+    mkdir -p /etc/pki/tls/certs
+
+    # Install Python dependencies
+    # transformers>=4.40 required for Llama 3 rope_type='llama3' support
+    pip install --no-cache-dir \
+        "numpy<2.0.0" \
+        transformers==4.41.0 \
+        peft==0.11.0 \
+        pandas \
+        yfinance \
+        finnhub-python \
+        nvidia-ml-py3 \
+        datasets==2.19.0 \
+        pyarrow==14.0.1 \
+        accelerate==0.30.0
+
+    # Additional useful packages
+    pip install --no-cache-dir \
+        jupyter \
+        ipython \
+        matplotlib \
+        scikit-learn \
+        tqdm
+
+    # Stub nvcc so DeepSpeed metadata check passes (CUDA not available at build time)
+    mkdir -p /usr/local/cuda/bin
+    printf '#!/bin/bash\necho "nvcc: NVIDIA (R) Cuda compiler driver"\necho "Copyright (c) 2005-2022 NVIDIA Corporation"\necho "Built on Wed_Sep_21_10:33:58_PDT_2022"\necho "Cuda compilation tools, release 11.8, V11.8.89"\necho "Build cuda_11.8.r11.8/compiler.31833905_0"' \
+        > /usr/local/cuda/bin/nvcc
+    chmod +x /usr/local/cuda/bin/nvcc
+
+    DS_BUILD_OPS=0 pip install --no-cache-dir tensorboard wandb rouge_score mpi4py deepspeed==0.14.0
+
+
+%runscript
+    exec python3 "$@"
+
+%startscript
+    exec python3 "$@"

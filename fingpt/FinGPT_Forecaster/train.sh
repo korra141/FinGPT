@@ -1,18 +1,21 @@
 export NCCL_IGNORE_DISABLED_P2P=1
+export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512"
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 export TOKENIZERS_PARALLELISM=0
+export DS_BUILD_OPS=0
+export DS_BUILD_SPARSE_ATTN=0
+export DEEPSPEED_DISABLE_FUSED_ADAM=1
 
-
-deepspeed \
---include localhost:2,3 \
-train_lora.py \
---run_name dow30v3-llama2-5e-5lr-qkvogud \
+# deepspeed \
+# --include localhost:0 \
+python3 train_lora.py \ 
+--run_name dow30v3-llama2-1e-5lr \
 --base_model llama2 \
---dataset dow30-20230601-20230930-llama,dow30nobasics-20230601-20230930-llama,dow30v3-20221231-20230531-llama*2 \
+--dataset dow30-202305-202405 \
 --max_length 4096 \
---batch_size 1 \
+--batch_size 2 \
 --gradient_accumulation_steps 16 \
---learning_rate 5e-5 \
+--learning_rate 1e-5 \
 --num_epochs 5 \
 --log_interval 10 \
 --warmup_ratio 0.03 \

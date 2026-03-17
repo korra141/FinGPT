@@ -4,9 +4,8 @@ import torch
 import os
 from huggingface_hub import login
 
-# Hugging Face Token
-# hf_token = os.getenv('HF_TOKEN')  # Set HF_TOKEN environment variable
-hf_token = "REDACTED_HF_TOKEN"
+# Hugging Face Token — set HF_TOKEN environment variable
+hf_token = os.getenv('HF_TOKEN') or os.getenv('HF_USER_ACCESS_TOKEN')
 if hf_token:
     login(token=hf_token)
 else:

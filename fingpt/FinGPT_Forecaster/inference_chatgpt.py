@@ -11,7 +11,7 @@ print(f"GPU Detected: {torch.cuda.is_available()}")
 print(f"GPU Name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None'}")
 print(f"Triton Available: {is_triton_available()}")
 
-hf_token = "REDACTED_HF_TOKEN"
+hf_token = os.getenv('HF_TOKEN') or os.getenv('HF_USER_ACCESS_TOKEN')
 if hf_token:
     login(token=hf_token)
 

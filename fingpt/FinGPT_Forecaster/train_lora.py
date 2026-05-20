@@ -57,8 +57,9 @@ class GenerationEvalCallback(TrainerCallback):
                 inputs = {key: value.to(model.device) for key, value in inputs.items()}
                 
                 res = model.generate(
-                    **inputs, 
-                    use_cache=True
+                    **inputs,
+                    use_cache=True,
+                    max_new_tokens=512
                 )
                 output = tokenizer.decode(res[0], skip_special_tokens=True)
                 answer = re.sub(r'.*\[/INST\]\s*', '', output, flags=re.DOTALL)
@@ -68,6 +69,7 @@ class GenerationEvalCallback(TrainerCallback):
 
                 # print("GENERATED: ", answer)
                 # print("REFERENCE: ", gt)
+                torch.cuda.empty_cache()
 
             metrics = calc_metrics(reference_texts, generated_texts)
             
@@ -89,11 +91,13 @@ def main(args):
     token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
 
     # load model
+    # LOCAL_RANK is set by torchrun for each worker; fall back to 0 for single-GPU runs.
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         # load_in_8bit=True,  # incompatible with MIG slices (cublasLt error)
         torch_dtype=torch.float16,
-        device_map="auto",
+        device_map={"": local_rank},
         trust_remote_code=True,
         token=token
     )
@@ -194,9 +198,10 @@ def main(args):
         ]
     )
     
-    if torch.__version__ >= "2" and sys.platform != "win32":
-        model = torch.compile(model)
-    
+    # torch.compile disabled: high memory overhead inside Apptainer/container environments
+    # if torch.__version__ >= "2" and sys.platform != "win32":
+    #     model = torch.compile(model)
+
     torch.cuda.empty_cache()
     trainer.train()
 

@@ -12,8 +12,8 @@ export TRANSFORMERS_CACHE=/mnt/.cache/huggingface/hub
 # --include localhost:0 \
 
 python3 train_lora.py \
---run_name dow30v3-llama3-1e-5lr \
---base_model llama3 \
+--run_name dow30v3-llama2-5e-5lr \
+--base_model llama2 \
 --dataset dow30-202305-202405 \
 --max_length 1024 \
 --batch_size 1 \

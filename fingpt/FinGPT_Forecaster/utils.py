@@ -4,6 +4,7 @@ import datasets
 from sklearn.metrics import accuracy_score, mean_squared_error
 from collections import defaultdict
 from rouge_score import rouge_scorer
+from bert_score import score as _bert_score
 
 
 lora_module_dict = {
@@ -13,7 +14,12 @@ lora_module_dict = {
         'o_proj', 'gate_proj', 'up_proj', 'down_proj',
         # 'embed_tokens', 'lm_head',
     ],
+    'llama3': [
+        'q_proj', 'k_proj', 'v_proj',
+        'o_proj', 'gate_proj', 'up_proj', 'down_proj',
+    ],
 }
+     
 
 
 def tokenize(args, tokenizer, feature):
@@ -51,7 +57,7 @@ def parse_model_name(name, from_remote=False):
     elif name == 'llama2':
         return 'meta-llama/Llama-2-7b-chat-hf' # if from_remote else 'base_models/Llama-2-7b-chat-hf'
     elif name == 'llama3':
-        return 'meta-llama/Llama-3.1-8B' # if from_remote else 'base_models/Llama-3-7b-chat-hf'
+        return 'meta-llama/Meta-Llama-3-8B' # if from_remote else 'base_models/Llama-3-7b-chat-hf'
     else:
         raise ValueError(f"Undefined base model {name}")
         
@@ -75,9 +81,73 @@ def load_dataset(names, from_remote=False):
     return dataset_list
 
 
+def parse_answer_base(answer):
+    """
+    Parse output that uses plain (non-bracketed) section headers:
+
+        Positive Developments:
+        1. ...
+
+        Potential Concerns:
+        1. ...
+
+        Prediction & Analysis:
+        Based on ... we predict ... [single paragraph]
+    """
+    section_re  = re.compile(r'\[?Positive Developments\]?\s*:',          re.IGNORECASE)
+    concerns_re = re.compile(r'\[?Potential Concerns\]?\s*:',              re.IGNORECASE)
+    pna_re      = re.compile(r'\[?Prediction\s*[&and]+\s*Analysis\]?\s*:', re.IGNORECASE)
+    note_re     = re.compile(r'\n\s*Note\s*:',                             re.IGNORECASE)
+
+    pos_match = section_re.search(answer)
+    con_match = concerns_re.search(answer)
+    pna_match = pna_re.search(answer)
+
+    if not (pos_match and con_match and pna_match):
+        return None
+
+    pros     = answer[pos_match.end():con_match.start()].strip()
+    cons     = answer[con_match.end():pna_match.start()].strip()
+    pna_text = answer[pna_match.end():].strip()
+
+    note_match = note_re.search(pna_text)
+    if note_match:
+        pna_text = pna_text[:note_match.start()].strip()
+
+    if not pna_text:
+        return None
+
+    pna_lower = pna_text.lower()
+    if re.search(r'\bup\b|increase|rise|higher|outperform|bullish|upside', pna_lower):
+        pred_bin = 1
+    elif re.search(r'\bdown\b|decrease|decline|fall|lower|bearish|downside', pna_lower):
+        pred_bin = -1
+    else:
+        pred_bin = 0
+
+    match_pct = re.search(r'(\d+)\s*-\s*(\d+)\s*%', pna_text)
+   
+    if match_pct and match_pct.lastindex == 2:
+        pred_margin = pred_bin * (float(match_pct.group(1)) + float(match_pct.group(2))) / 2
+    elif match_pct:
+        pred_margin = pred_bin * (float(match_pct.group(1)) + 0.5)
+    else:
+        match_pct = re.search(r'(?:more than\s+)?(\d+)\s*%', pna_text)
+        pred_margin = pred_bin * (int(match_pct.group(1)) + 0.5) if match_pct else 0.0
+
+        
+    return {
+        "positive developments": pros,
+        "potential concerns":    cons,
+        "prediction":            pred_margin,
+        "prediction_binary":     pred_bin,
+        "analysis":              pna_text,
+    }
+
+
 def parse_answer(answer):
     
-    match_res = re.match(r"^\s*\[Positive Developments\]:\s*(.*)\s*\[Potential Concerns\]:\s*(.*)\s*\[Prediction (&|and) Analysis\]:\s*(.*)\s*$", answer, flags=re.DOTALL)
+    match_res = re.match(r"^\s*\[Positive Developments\]:?\s*(.*)\s*\[Potential Concerns\]:?\s*(.*)\s*-*\s*\[Prediction (&|and) Analysis\]:?\s*(.*)\s*$", answer, flags=re.DOTALL)
     if not match_res:
         return None
     
@@ -100,7 +170,12 @@ def parse_answer(answer):
     if not match_res:
         match_res = re.search(r'(?:more than )?(\d)+?%', pred)    
         
-    pred_margin = pred_bin * (int(match_res.group(1)) + 0.5) if match_res else 0.
+    if match_res and match_res.lastindex == 2:
+        pred_margin = pred_bin * (int(match_res.group(1)) + int(match_res.group(2))) / 2
+    elif match_res:
+        pred_margin = pred_bin * (int(match_res.group(1)) + 0.5)
+    else:
+        pred_margin = 0.
         
     return {
         "positive developments": pros,
@@ -110,6 +185,15 @@ def parse_answer(answer):
         "analysis": anal
     }
     
+
+def calc_bert_score(references, candidates, lang="en"):
+    P, R, F1 = _bert_score(candidates, references, lang=lang, verbose=False)
+    return {
+        'precision': round(P.mean().item(), 4),
+        'recall':    round(R.mean().item(), 4),
+        'f1':        round(F1.mean().item(), 4),
+    }
+
 
 def calc_rouge_score(references, answers):
     

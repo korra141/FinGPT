@@ -145,6 +145,12 @@ fingpt/FinGPT_Forecaster/fingpt_forecaster/
 fingpt/FinGPT_Forecaster/hf_cache/
 fingpt/FinGPT_Forecaster/overlay.img
 fingpt/FinGPT_Forecaster/wandb/
-
+fingpt/FinGPT_Forecaster/build*
+fingpt/FinGPT_Forecaster/*.out
+fingpt/FinGPT_Forecaster/*.err
+fingpt/FinGPT_Forecaster/chatgpt_cot
+fingpt/FinGPT_Forecaster/inference-eval-llama3-multigpu_outputs.json
+#SBATCH --partition=gpupreempt
 # Benchmark data
 fingpt/FinGPT_Benchmark/data/*/**
+TODO.md

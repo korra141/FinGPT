@@ -3,13 +3,14 @@ import pdb
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import PeftModel
 import torch
+import torch.distributed as dist
 import os
 import re
 import json
 import argparse
 import wandb
 from tqdm import tqdm
-from utils import parse_model_name, load_dataset, calc_metrics, calc_rouge_score, calc_bert_score, parse_answer, parse_answer_base
+from utils import parse_model_name, load_dataset, calc_metrics, calc_rouge_score, calc_bert_score, parse_answer, parse_answer_base, mask_numbers_in_prompt, mask_fin_words_in_prompt
 from collections import defaultdict
 from sklearn.metrics import accuracy_score, mean_squared_error
 
@@ -28,15 +29,6 @@ CHATML_JUNK_RE = re.compile(
     r'<\|im_end\|>.*|<\|im_start\|>.*|<\|end_of_text\|>.*|<\|eot_id\|>.*',
     re.DOTALL | re.IGNORECASE,
 )
-
-# Matches numbers with optional leading sign/currency and trailing percent,
-# e.g. 42, 3.5%, $1,234.56, +0.8%, -12.3
-NUMBER_RE = re.compile(r'[\+\-\$]?\d[\d,.]*%?')
-
-
-def mask_numbers_in_prompt(prompt: str, mask_token: str = '[NUM]') -> str:
-    return NUMBER_RE.sub(mask_token, prompt)
-
 
 def strip_chatml_artifacts(text: str) -> str:
     """Remove <|im_end|> and any text that follows (fake continuation turns)."""
@@ -81,29 +73,42 @@ def build_llama3_prompt(tokenizer, raw_prompt: str) -> str:
     return raw_prompt
 
 
-def calc_metrics_llama3(answers, gts):
+def calc_metrics_llama3(answers, gts, parsed_answers=None):
     answers_dict = defaultdict(list)
     gts_dict = defaultdict(list)
+    mse_preds, mse_gts_list = [], []
 
-    for answer, gt in zip(answers, gts):
-        answer_dict = parse_answer_base(answer)
+    if parsed_answers is None:
+        parsed_answers = [parse_answer_base(a) for a in answers]
+
+    for answer_dict, gt in zip(parsed_answers, gts):
         gt_dict = parse_answer(gt)  # GT uses the original bracketed format
 
         if answer_dict and gt_dict:
             for k in answer_dict:
                 answers_dict[k].append(answer_dict[k])
                 gts_dict[k].append(gt_dict[k])
+            # MSE only when a real numeric prediction was extracted (not masked by [NUM])
+            if answer_dict['prediction'] is not None and gt_dict['prediction'] is not None:
+                mse_preds.append(answer_dict['prediction'])
+                mse_gts_list.append(gt_dict['prediction'])
 
     total = len(answers)
-    parsed = len(answers_dict['prediction'])
+    parsed = len(answers_dict['prediction_binary'])
     print(f"\nParsed {parsed}/{total} samples successfully ({100*parsed/total:.1f}%)")
 
-    if not answers_dict['prediction']:
+    if not parsed:
         print("WARNING: No samples parsed — check model output format.")
         return {}
 
     bin_acc = accuracy_score(gts_dict['prediction_binary'], answers_dict['prediction_binary'])
-    mse = mean_squared_error(gts_dict['prediction'], answers_dict['prediction'])
+
+    if mse_preds:
+        mse = mean_squared_error(mse_gts_list, mse_preds)
+        print(f"Binary Accuracy: {bin_acc:.2f}  |  MSE: {mse:.2f} ({len(mse_preds)}/{parsed} samples had numeric predictions)")
+    else:
+        mse = None
+        print(f"Binary Accuracy: {bin_acc:.2f}  |  MSE: N/A (no numeric predictions — [NUM] masked?)")
 
     pros_rouge = calc_rouge_score(gts_dict['positive developments'], answers_dict['positive developments'])
     cons_rouge = calc_rouge_score(gts_dict['potential concerns'], answers_dict['potential concerns'])
@@ -113,7 +118,6 @@ def calc_metrics_llama3(answers, gts):
     cons_bert = calc_bert_score(gts_dict['potential concerns'], answers_dict['potential concerns'])
     anal_bert = calc_bert_score(gts_dict['analysis'], answers_dict['analysis'])
 
-    print(f"Binary Accuracy: {bin_acc:.2f}  |  Mean Square Error: {mse:.2f}")
     print(f"Rouge Score of Positive Developments: {pros_rouge}")
     print(f"Rouge Score of Potential Concerns: {cons_rouge}")
     print(f"Rouge Score of Summary Analysis: {anal_rouge}")
@@ -135,11 +139,16 @@ def calc_metrics_llama3(answers, gts):
 
 
 def run_inference(args):
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    is_main = local_rank == 0
+    if world_size > 1:
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl")
+
     token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
 
-    # model_name = args.base_model_path if args.base_model_path else parse_model_name(args.base_model, args.from_remote)
-
-    model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
+    model_name = parse_model_name('llama3')
 
     if args.load_in_4bit:
         bnb_config = BitsAndBytesConfig(
@@ -161,7 +170,7 @@ def run_inference(args):
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        device_map="cuda",
+        device_map={"": local_rank},
         trust_remote_code=True,
         token=token,
         **model_kwargs,
@@ -180,7 +189,12 @@ def run_inference(args):
     if args.num_samples > 0:
         dataset_test = dataset_test.shuffle(seed=42).select(range(min(args.num_samples, len(dataset_test))))
 
-    print(f"Running inference on {len(dataset_test)} samples...")
+    # Shard dataset across ranks
+    if world_size > 1:
+        dataset_test = dataset_test.select(range(local_rank, len(dataset_test), world_size))
+
+    if is_main:
+        print(f"Running inference on {len(dataset_test)} samples per rank ({world_size} ranks)...")
 
     generated_texts, reference_texts, prompt_texts, raw_outputs = [], [], [], []
 
@@ -188,6 +202,8 @@ def run_inference(args):
         raw_prompt = feature['prompt']
         if args.mask_numbers:
             raw_prompt = mask_numbers_in_prompt(raw_prompt)
+        if args.mask_fin_words:
+            raw_prompt = mask_fin_words_in_prompt(raw_prompt)
         gt = feature['answer']
 
         formatted_prompt = build_llama3_prompt(tokenizer, raw_prompt)
@@ -235,18 +251,58 @@ def run_inference(args):
         reference_texts.append(gt)
         prompt_texts.append(formatted_prompt)
 
-    raw_output_path = f"{args.run_name}_raw_outputs.json"
+    # Gather results from all ranks onto rank 0
+    if world_size > 1:
+        gathered = [None] * world_size
+        dist.all_gather_object(gathered, {
+            "generated": generated_texts,
+            "reference": reference_texts,
+            "prompts": prompt_texts,
+            "raw": raw_outputs,
+        })
+        if is_main:
+            generated_texts = [x for g in gathered for x in g["generated"]]
+            reference_texts = [x for g in gathered for x in g["reference"]]
+            prompt_texts    = [x for g in gathered for x in g["prompts"]]
+            raw_outputs     = [x for g in gathered for x in g["raw"]]
+
+    if not is_main:
+        return {}
+
+    out_dir = os.path.join("wandb", args.run_name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    raw_output_path = os.path.join(out_dir, f"{args.run_name}_raw_outputs.json")
     with open(raw_output_path, 'w') as f:
         json.dump(raw_outputs[:10], f, indent=2)
     print(f"Saved raw outputs (first 10) to {raw_output_path}")
 
-    output_path = f"{args.run_name}_outputs.json"
+    parsed_answers = [parse_answer_base(g) for g in generated_texts]
+
+    output_path = os.path.join(out_dir, f"{args.run_name}_outputs.json")
     with open(output_path, 'w') as f:
         json.dump([
-            {"prompt": p, "generated": g, "reference": r}
-            for p, g, r in zip(prompt_texts, generated_texts, reference_texts)
+            {
+                "prompt": p,
+                "generated": g,
+                "parsed": parsed,
+                "reference": r,
+            }
+            for p, g, parsed, r in zip(prompt_texts, generated_texts, parsed_answers, reference_texts)
         ], f, indent=2)
     print(f"\nSaved raw outputs to {output_path}")
+
+    unparsed_path = os.path.join(out_dir, f"{args.run_name}_unparsed.json")
+    with open(unparsed_path, 'w') as f:
+        json.dump(
+            [
+                {"prompt": p, "generated": g, "reference": r}
+                for p, g, parsed, r in zip(prompt_texts, generated_texts, parsed_answers, reference_texts)
+                if parsed is None
+            ],
+            f, indent=2,
+        )
+    print(f"Saved unparsed outputs to {unparsed_path}")
 
     print("\n=== Sample Outputs (first 3) ===")
     for i in range(min(3, len(generated_texts))):
@@ -255,7 +311,7 @@ def run_inference(args):
         print(f"[REFERENCE]:\n{reference_texts[i][:300]}")
 
     print("\n=== Inference Metrics ===")
-    metrics = calc_metrics_llama3(generated_texts, reference_texts)
+    metrics = calc_metrics_llama3(generated_texts, reference_texts, parsed_answers=parsed_answers)
     print(metrics)
 
     if args.wandb:
@@ -264,6 +320,8 @@ def run_inference(args):
         if output_path and os.path.exists(output_path):
             artifact = wandb.Artifact(f"{args.run_name}-outputs", type="predictions")
             artifact.add_file(output_path)
+            if os.path.exists(unparsed_path):
+                artifact.add_file(unparsed_path)
             wandb.log_artifact(artifact)
         wandb.finish()
 
@@ -273,12 +331,8 @@ def run_inference(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_name", default='inference-llama3', type=str)
-    parser.add_argument("--base_model", default='llama3', type=str, choices=['chatglm2', 'llama2', 'llama3'],
-                        help="Base model key resolved via parse_model_name (e.g. llama3)")
-    parser.add_argument("--base_model_path", default=None, type=str,
-                        help="Local path to base model weights; overrides --base_model HF lookup")
     parser.add_argument("--peft_model", default=None, type=str,
-                        help="Path or HF repo of LoRA adapter (optional)")
+                        help="HF repo ID or local path of LoRA adapter (optional)")
     parser.add_argument("--dataset", required=True, type=str)
     parser.add_argument("--max_length", default=4096, type=int)
     parser.add_argument("--num_samples", default=-1, type=int,
@@ -291,6 +345,8 @@ if __name__ == "__main__":
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--mask_numbers", action="store_true",
                         help="Replace all numbers (and surrounding ±$%%) in prompts with [NUM]")
+    parser.add_argument("--mask_fin_words", action="store_true",
+                        help="Replace financial directional words (increase, surge, bullish, ...) in prompts with [FIN]")
     args = parser.parse_args()
 
     run_inference(args)

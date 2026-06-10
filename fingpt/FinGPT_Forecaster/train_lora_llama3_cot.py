@@ -1,9 +1,7 @@
-from transformers.integrations import TensorBoardCallback
-from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import TrainingArguments, Trainer, DataCollatorForSeq2Seq
 from transformers import TrainerCallback, TrainerState, TrainerControl
-from transformers.trainer import TRAINING_ARGS_NAME
-from torch.utils.tensorboard import SummaryWriter
+import gc
 import datasets
 import torch
 import os
@@ -19,18 +17,36 @@ from utils import lora_module_dict, parse_model_name, load_dataset, calc_metrics
 from peft import (
     TaskType,
     LoraConfig,
+    PeftModel,
     get_peft_model,
-    get_peft_model_state_dict,
-    set_peft_model_state_dict,
     prepare_model_for_kbit_training,
 )
 from transformers import BitsAndBytesConfig
 
 os.environ['WANDB_PROJECT'] = 'fingpt-forecaster'
 
-# Markers used by the CoT-trained model (matches inference_chatgpt.py)
-COT_START = 'analysis'
+IGNORE_INDEX = -100
+
 COT_END = 'assistantfinal'
+
+LLAMA2_SYS_RE = re.compile(
+    r'\[INST\]<<SYS>>\n(.*?)\n<</SYS>>\n\n(.*?)\[/INST\]',
+    re.DOTALL,
+)
+
+
+def build_llama3_prompt(tokenizer, raw_prompt: str) -> str:
+    """Convert a Llama2-format prompt to a Llama3 chat-template prompt."""
+    m = LLAMA2_SYS_RE.search(raw_prompt)
+    if m:
+        messages = [
+            {"role": "system", "content": m.group(1).strip()},
+            {"role": "user",   "content": m.group(2).strip()},
+        ]
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+        )
+    return raw_prompt
 
 
 def extract_cot_answer(text: str) -> str:
@@ -39,13 +55,11 @@ def extract_cot_answer(text: str) -> str:
     if split:
         text = text[split.end():]
     else:
-        # Fallback: last occurrence of the first section header
         last = None
         for m in re.finditer(r'\[Positive Developments\]', text, re.IGNORECASE):
             last = m
         if last:
             text = text[last.start():]
-    # Normalise bold markdown headers → plain bracket form
     text = re.sub(r'\*+\[([^\]]+)\]\*+', r'[\1]', text)
     return text.strip()
 
@@ -62,22 +76,17 @@ def extract_cot_reasoning(dataset):
     return dataset.map(_add_cot)
 
 
-IGNORE_INDEX = -100
-
-
 def tokenize_cot(args, tokenizer, feature):
     """
-    Tokenize a CoT-format sample.
+    Tokenize a CoT-format sample for Llama3.
 
-    The answer field is expected to contain:
-        analysis{reasoning}assistantfinal{structured answer}
-
-    When args.mask_cot_loss is True (recommended), loss is computed only on
-    the final answer tokens — the CoT reasoning tokens are masked out.
-    When False, loss is computed over the full answer (CoT + final answer).
+    Converts the raw (Llama2-format) prompt to Llama3 chat template before
+    encoding. When args.mask_cot_loss is True, loss is computed only on the
+    final answer tokens; otherwise the full CoT + answer is supervised.
     """
+    llama3_prompt = build_llama3_prompt(tokenizer, feature['prompt'])
     prompt_ids = tokenizer.encode(
-        feature['prompt'].strip(), padding=False,
+        llama3_prompt, padding=False,
         max_length=args.max_length, truncation=True
     )
 
@@ -95,11 +104,10 @@ def tokenize_cot(args, tokenizer, feature):
     )
 
     # Guarantee total sequence fits within max_length (reserve 1 slot for EOS).
-    # Priority: keep final_ids intact (it's the supervision signal), trim cot
-    # first (context only), then prompt as a last resort.
+    # Priority: keep final_ids intact (supervision signal), trim cot first
+    # (context only), then prompt as last resort.
     budget = args.max_length - len(final_ids) - 1
     if budget < 0:
-        # final_ids itself is too long; drop context entirely
         final_ids = final_ids[:args.max_length - 1]
         prompt_ids = []
         cot_ids = []
@@ -112,9 +120,8 @@ def tokenize_cot(args, tokenizer, feature):
     if not exceed_max_length:
         input_ids.append(tokenizer.eos_token_id)
 
-    # Use -100 directly as the ignore index rather than pad_token_id.
-    # pad_token == eos_token for LLaMA, so relying on the DataCollator to
-    # convert pad→-100 would also mask genuine EOS tokens in the labels.
+    # Use -100 directly as the ignore index — pad_token == eos_token for LLaMA,
+    # so using pad_token_id would also mask genuine EOS tokens in the labels.
     if args.mask_cot_loss:
         supervised_start = len(prompt_ids) + len(cot_ids)
         label_ids = [IGNORE_INDEX] * supervised_start + input_ids[supervised_start:]
@@ -128,10 +135,30 @@ def tokenize_cot(args, tokenizer, feature):
     }
 
 
+def _is_peft_adapter_dir(path: str) -> bool:
+    """True if path is a saved PEFT adapter (contains adapter_config.json)."""
+    return os.path.isfile(os.path.join(path, "adapter_config.json"))
+
+
+class SavePeftModelCallback(TrainerCallback):
+    """Save PEFT adapter format alongside each Trainer/DeepSpeed ZeRO checkpoint.
+
+    With ZeRO-3, save_pretrained() triggers a cross-rank param gather
+    (requires gather_16bit_weights_on_model_save=true in the DS config).
+    Must be called on ALL ranks; only rank 0 writes files.
+    """
+
+    def on_save(self, args, state: TrainerState, control: TrainerControl, **kwargs):
+        checkpoint_dir = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
+        kwargs["model"].save_pretrained(checkpoint_dir)
+        return control
+
+
 class GenerationEvalCallback(TrainerCallback):
 
-    def __init__(self, eval_dataset, max_length=4096, eval_batch_size=4):
-        self.eval_dataset = eval_dataset
+    def __init__(self, eval_dataset, max_length=8192, eval_batch_size=4):
+        # Materialize once — avoids re-converting the Arrow table every eval step.
+        self._dataset_list = list(eval_dataset)
         self.max_length = max_length
         self.eval_batch_size = eval_batch_size
 
@@ -141,20 +168,22 @@ class GenerationEvalCallback(TrainerCallback):
         tokenizer = kwargs['tokenizer']
 
         global_rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank  = int(os.environ.get("LOCAL_RANK", 0))
 
         generated_texts, reference_texts = [], []
 
-        # Left-pad so all new tokens are appended at the right edge of each sequence.
         orig_padding_side = tokenizer.padding_side
         tokenizer.padding_side = 'left'
 
-        dataset_list = list(self.eval_dataset)
-        n_batches = (len(dataset_list) + self.eval_batch_size - 1) // self.eval_batch_size
+        n_batches = (len(self._dataset_list) + self.eval_batch_size - 1) // self.eval_batch_size
+
+        # Ensure all ranks enter the eval loop together after training completes.
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
 
         for batch_idx in tqdm(range(n_batches), disable=global_rank != 0):
-            batch = dataset_list[batch_idx * self.eval_batch_size:(batch_idx + 1) * self.eval_batch_size]
-            prompts = [f['prompt'] for f in batch]
+            batch = self._dataset_list[batch_idx * self.eval_batch_size:(batch_idx + 1) * self.eval_batch_size]
+            prompts = [build_llama3_prompt(tokenizer, f['prompt']) for f in batch]
             gts = [f['answer'] for f in batch]
 
             # All ranks receive identical input — ZeRO-3 allgather shapes stay consistent.
@@ -188,9 +217,16 @@ class GenerationEvalCallback(TrainerCallback):
                     generated_texts.append(answer)
                     reference_texts.append(gt_answer)
 
+            # Decode happens above before this point; drop tensors so empty_cache
+            # actually reclaims VRAM rather than being a no-op.
+            del res, inputs
             torch.cuda.empty_cache()
 
         tokenizer.padding_side = orig_padding_side
+
+        # Wait for all ranks to finish generate before rank 0 logs metrics.
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
 
         if global_rank == 0:
             metrics = calc_metrics(reference_texts, generated_texts)
@@ -201,10 +237,7 @@ class GenerationEvalCallback(TrainerCallback):
             torch.cuda.empty_cache()
 
 
-
 def load_local_dataset(path):
-    """Load a DatasetDict saved with save_to_disk (e.g. chatgpt_cot/).
-    Returns a one-element list to match the format expected by the caller."""
     ds = datasets.load_from_disk(path)
     if 'train' not in ds or 'test' not in ds:
         raise ValueError(f"{path} must contain 'train' and 'test' splits, found: {list(ds.keys())}")
@@ -216,16 +249,21 @@ def main(args):
 
     torch.distributed.init_process_group(backend="nccl")
     torch.cuda.set_device(local_rank)
+    global_rank = torch.distributed.get_rank()
 
-    if local_rank == 0:
+    if global_rank == 0:
         run = wandb.init(project=os.environ['WANDB_PROJECT'], name=args.run_name)
         args.run_name = f"{args.run_name}-{run.id}"
 
-    model_name = parse_model_name(args.base_model, False)
+    # Broadcast run_name so every rank uses the same output_dir.
+    _name = [args.run_name]
+    torch.distributed.broadcast_object_list(_name, src=0)
+    args.run_name = _name[0]
+
+    model_name = parse_model_name('llama3')
     token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
 
     # Stagger loading: rank 0 loads first, then releases barrier for other ranks.
-    # Prevents all processes hammering the CUDA allocator simultaneously.
     if local_rank != 0:
         torch.distributed.barrier()
 
@@ -233,7 +271,7 @@ def main(args):
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_compute_dtype=torch.bfloat16,
             bnb_4bit_use_double_quant=True,
         )
         model = AutoModelForCausalLM.from_pretrained(
@@ -248,7 +286,7 @@ def main(args):
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,
             device_map={"": local_rank},
             low_cpu_mem_usage=True,
             trust_remote_code=True,
@@ -267,38 +305,46 @@ def main(args):
     if os.path.isdir(args.cot_dataset):
         cot_dataset = load_local_dataset(args.cot_dataset)
     else:
-        print(f"There is not cot dataset at {args.cot_dataset}. Please provide a valid path to a local dataset saved with save_to_disk, or specify a HuggingFace Hub dataset identifier.")
+        print(f"No CoT dataset found at {args.cot_dataset}. Provide a path saved with save_to_disk.")
         sys.exit(1)
-    
-    cot_dataset_train = extract_cot_reasoning(cot_dataset['train'])
-    cot_dataset_test =  extract_cot_reasoning(cot_dataset['test'])
 
+    cot_dataset_train = extract_cot_reasoning(cot_dataset['train'])
+    cot_dataset_test  = extract_cot_reasoning(cot_dataset['test'])
 
     if args.dataset:
         dataset_ = load_dataset(args.dataset, True)[0]
 
     cot_subset_train = cot_dataset_train.select_columns(['cot_reasoning'])
-    cot_subset_test = cot_dataset_test.select_columns(['cot_reasoning'])
+    cot_subset_test  = cot_dataset_test.select_columns(['cot_reasoning'])
 
-    
-    dataset_train_untoken = datasets.concatenate_datasets([dataset_['train'], cot_subset_train],axis=1 ).shuffle(seed=42)
-
-    dataset_test_untoken = datasets.concatenate_datasets([dataset_['test'], cot_subset_test],axis=1 )
+    dataset_train_untoken = datasets.concatenate_datasets(
+        [dataset_['train'], cot_subset_train], axis=1
+    ).shuffle(seed=42)
+    dataset_test_untoken = datasets.concatenate_datasets(
+        [dataset_['test'], cot_subset_test], axis=1
+    )
 
     tokenize_fn = partial(tokenize_cot, args, tokenizer)
 
     def build_dataset(source):
-        tokenized = [tokenize_fn(feature) for feature in source]
-        return datasets.Dataset.from_dict({
-            'input_ids': [t['input_ids'] for t in tokenized],
-            'labels':    [t['labels']    for t in tokenized],
-        })
+        def _tok(feature):
+            t = tokenize_fn(feature)
+            return {'input_ids': t['input_ids'], 'labels': t['labels']}
+        return source.map(_tok, remove_columns=source.column_names)
 
     dataset_train = build_dataset(dataset_train_untoken)
     dataset_test  = build_dataset(dataset_test_untoken)
 
-    current_time = datetime.now()
-    formatted_time = current_time.strftime('%Y%m%d%H%M')
+    # Free raw text datasets — tokenized versions are Arrow-backed and no longer
+    # need the originals. dataset_test_untoken is kept for GenerationEvalCallback.
+    del cot_dataset, cot_dataset_train, cot_dataset_test, cot_subset_train, cot_subset_test
+    del dataset_train_untoken, dataset_
+    gc.collect()
+
+    # Compute timestamp on rank 0 and broadcast so all ranks get the same output_dir.
+    _ts = [datetime.now().strftime('%Y%m%d%H%M') if global_rank == 0 else '']
+    torch.distributed.broadcast_object_list(_ts, src=0)
+    formatted_time = _ts[0]
 
     training_args = TrainingArguments(
         output_dir=f'finetuned_models/{args.run_name}_{formatted_time}',
@@ -313,9 +359,10 @@ def main(args):
         warmup_ratio=args.warmup_ratio,
         lr_scheduler_type=args.scheduler,
         save_steps=args.eval_steps,
-        eval_steps=args.eval_steps,
-        fp16=True,
-        evaluation_strategy=args.evaluation_strategy,
+        bf16=True,
+        evaluation_strategy='no',
+        group_by_length=True,
+        save_total_limit=2,
         remove_unused_columns=False,
         report_to='wandb',
         run_name=args.run_name,
@@ -325,21 +372,30 @@ def main(args):
 
     if not args.load_in_4bit:
         # prepare_model_for_kbit_training already enables gradient checkpointing for 4-bit
-        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        model.enable_input_require_grads()
     model.model.config.use_cache = False
 
-    peft_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        inference_mode=False,
-        r=8,
-        lora_alpha=16,
-        lora_dropout=0.1,
-        target_modules=lora_module_dict[args.base_model],
-        bias='none',
-    )
-    model = get_peft_model(model, peft_config)
+    if args.resume_from_checkpoint and _is_peft_adapter_dir(args.resume_from_checkpoint):
+        # Path is a saved PEFT adapter — load weights directly.
+        model = PeftModel.from_pretrained(
+            model, args.resume_from_checkpoint, is_trainable=True,
+        )
+    else:
+        # Fresh LoRA config — either first run or resuming from a DeepSpeed ZeRO
+        # checkpoint (no adapter_config.json). Trainer handles ZeRO state loading.
+        peft_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            inference_mode=False,
+            r=8,
+            lora_alpha=16,
+            lora_dropout=0.1,
+            target_modules=lora_module_dict['llama3'],
+            bias='none',
+        )
+        model = get_peft_model(model, peft_config)
     if not args.load_in_4bit:
-        # PEFT inherits the base model's fp16 dtype; GradScaler requires fp32 grads.
+        # Cast trainable LoRA params to fp32 for gradient stability (base stays bf16).
         # 4-bit: bitsandbytes upcasts automatically during compute, no manual cast needed.
         for param in model.parameters():
             if param.requires_grad:
@@ -359,24 +415,24 @@ def main(args):
                 eval_dataset=dataset_test_untoken,
                 max_length=args.max_length,
                 eval_batch_size=args.gen_eval_batch_size,
-            )
+            ),
+            SavePeftModelCallback(),
         ],
     )
 
     torch.cuda.empty_cache()
-    trainer.train()
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint or None)
     model.save_pretrained(training_args.output_dir)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--local_rank", default=0, type=int)
-    parser.add_argument("--run_name", default='local-test-cot', type=str)
+    parser.add_argument("--run_name", default='local-test-llama3-cot', type=str)
     parser.add_argument("--cot_dataset", required=True, type=str)
     parser.add_argument("--dataset", type=str)
-    parser.add_argument("--base_model", required=True, type=str, choices=['chatglm2', 'llama2', 'llama3'])
-    parser.add_argument("--max_length", default=4096, type=int,
-                        help="Total sequence length (prompt + CoT + final answer). Hard limit for LLaMA-2; use 8192 for LLaMA-3.")
+    parser.add_argument("--max_length", default=8192, type=int,
+                        help="Total sequence length (prompt + CoT + final answer). LLaMA-3 native context is 8192.")
     parser.add_argument("--batch_size", default=1, type=int)
     parser.add_argument("--learning_rate", default=5e-5, type=float)
     parser.add_argument("--weight_decay", default=0.01, type=float)
@@ -387,17 +443,19 @@ if __name__ == "__main__":
     parser.add_argument("--warmup_ratio", default=0.03, type=float)
     parser.add_argument("--ds_config", default='./config_new.json', type=str)
     parser.add_argument("--scheduler", default='linear', type=str)
-    parser.add_argument("--instruct_template", default='default')
-    parser.add_argument("--evaluation_strategy", default='steps', type=str)
     parser.add_argument("--eval_steps", default=0.1, type=float)
     parser.add_argument("--hf_token", default=None, type=str,
                         help="HuggingFace API token (or set HF_TOKEN env var)")
     parser.add_argument("--gen_eval_batch_size", default=4, type=int,
-                        help="Batch size for GenerationEvalCallback at train end")
+                        help="Batch size for GenerationEvalCallback — all GPUs process the same padded batch")
     parser.add_argument("--mask_cot_loss", action="store_true",
                         help="Mask loss on CoT reasoning tokens; supervise only on final answer")
     parser.add_argument("--load_in_4bit", action="store_true",
                         help="QLoRA: load base model in 4-bit NF4 to cut VRAM ~50%% and allow larger batches")
+    parser.add_argument("--resume_from_checkpoint", default=None, type=str,
+                        help="Resume training from a checkpoint. Accepts either a PEFT adapter "
+                             "directory (must contain adapter_config.json) or a Trainer output "
+                             "directory whose checkpoint-N subdirs hold DeepSpeed ZeRO state.")
     args = parser.parse_args()
 
     wandb.login()

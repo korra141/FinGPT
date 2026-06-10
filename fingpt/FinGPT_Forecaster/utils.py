@@ -6,6 +6,67 @@ from collections import defaultdict
 from rouge_score import rouge_scorer
 from bert_score import score as _bert_score
 
+# Matches numbers with optional leading sign/currency and trailing percent,
+# e.g. 42, 3.5%, $1,234.56, +0.8%, -12.3
+NUMBER_RE = re.compile(r'[\+\-\$]?\d[\d,.]*%?')
+
+# Financial directional/sentiment words that signal price movement direction.
+# Covers: price-action verbs, their inflections, level adjectives, and
+# sentiment terms seen in the FinGPT-Forecaster prompt corpus.
+FINANCIAL_WORD_RE = re.compile(
+    r'\b(?:'
+    # explicit user list
+    r'up|down|high(?:er|est)?|low(?:er|est)?'
+    r'|increas(?:e|es|ed|ing)'
+    r'|decreas(?:e|es|ed|ing)'
+    # price-action verbs (seen in dataset prompts & headlines)
+    r'|rise|rises|rose|risen|rising'
+    r'|fall|falls|fell|fallen|falling'
+    r'|gain(?:s|ed|ing)?'
+    r'|los(?:e|es|t|ing)|loss(?:es)?'
+    r'|climb(?:s|ed|ing)?'
+    r'|drop(?:s|ped|ping)?'
+    r'|surg(?:e|es|ed|ing)'
+    r'|plung(?:e|es|ed|ing)'
+    r'|rally|ralli(?:es|ed|ing)'
+    r'|slid(?:e|es|ing)|slid'
+    r'|slip(?:s|ped|ping)?'
+    r'|tumbl(?:e|es|ed|ing)'
+    r'|soar(?:s|ed|ing)?'
+    r'|dip(?:s|ped|ping)?'
+    r'|jump(?:s|ed|ing)?'
+    r'|sink(?:s|ing)?|sank|sunk'
+    r'|rebound(?:s|ed|ing)?'
+    r'|advanc(?:e|es|ed|ing)'
+    r'|retreat(?:s|ed|ing)?'
+    r'|declin(?:e|es|ed|ing)'
+    # sentiment / directional adjectives
+    r'|bullish|bearish'
+    r'|upward|downward'
+    r'|upside|downside'
+    r'|outperform(?:s|ed|ing)?'
+    r'|underperform(?:s|ed|ing)?'
+    r'|strengthen(?:s|ed|ing)?'
+    r'|weaken(?:s|ed|ing)?'
+    r'|recover(?:s|ed|ing|y)?'
+    r'|expand(?:s|ed|ing)?'
+    r'|contract(?:s|ed|ing)?'
+    # earnings beat/miss language
+    r'|beat(?:s|ing)?'
+    r'|miss(?:es|ed|ing)?'
+    r'|exceed(?:s|ed|ing)?'
+    r')\b',
+    re.IGNORECASE,
+)
+
+
+def mask_numbers_in_prompt(prompt: str, mask_token: str = '[NUM]') -> str:
+    return NUMBER_RE.sub(mask_token, prompt)
+
+
+def mask_fin_words_in_prompt(prompt: str, mask_token: str = '[FIN]') -> str:
+    return FINANCIAL_WORD_RE.sub(mask_token, prompt)
+
 
 lora_module_dict = {
     'chatglm2': ['query_key_value'],
@@ -51,15 +112,15 @@ def tokenize(args, tokenizer, feature):
 
 
 def parse_model_name(name, from_remote=False):
-    
     if name == 'chatglm2':
         return 'THUDM/chatglm2-6b' if from_remote else 'base_models/chatglm2-6b'
     elif name == 'llama2':
-        return 'meta-llama/Llama-2-7b-chat-hf' # if from_remote else 'base_models/Llama-2-7b-chat-hf'
+        return 'meta-llama/Llama-2-7b-chat-hf'
     elif name == 'llama3':
-        return 'meta-llama/Meta-Llama-3-8B' # if from_remote else 'base_models/Llama-3-7b-chat-hf'
+        return "meta-llama/Meta-Llama-3-8B-Instruct"
     else:
-        raise ValueError(f"Undefined base model {name}")
+        # Treat as a full HF repo ID or local path
+        return name
         
     
 def load_dataset(names, from_remote=False):
@@ -96,7 +157,7 @@ def parse_answer_base(answer):
     """
     section_re  = re.compile(r'\[?Positive Developments\]?\s*:',          re.IGNORECASE)
     concerns_re = re.compile(r'\[?Potential Concerns\]?\s*:',              re.IGNORECASE)
-    pna_re      = re.compile(r'\[?Prediction\s*[&and]+\s*Analysis\]?\s*:', re.IGNORECASE)
+    pna_re      = re.compile(r'\[?Prediction\s*[&and]+\s*Analysis\]?\s*:?', re.IGNORECASE)
     note_re     = re.compile(r'\n\s*Note\s*:',                             re.IGNORECASE)
 
     pos_match = section_re.search(answer)
@@ -133,7 +194,7 @@ def parse_answer_base(answer):
         pred_margin = pred_bin * (float(match_pct.group(1)) + 0.5)
     else:
         match_pct = re.search(r'(?:more than\s+)?(\d+)\s*%', pna_text)
-        pred_margin = pred_bin * (int(match_pct.group(1)) + 0.5) if match_pct else 0.0
+        pred_margin = pred_bin * (int(match_pct.group(1)) + 0.5) if match_pct else None
 
         
     return {
@@ -153,7 +214,7 @@ def parse_answer(answer):
     
     pros, cons, pna = match_res.group(1), match_res.group(2), match_res.group(4)
         
-    match_res = re.match(r'^Prediction:\s*(.*)\s*Analysis:\s*(.*)\s*$', pna, flags=re.DOTALL)
+    match_res = re.match(r'^Prediction:?\s*(.*)\s*Analysis:?\s*(.*)\s*$', pna, flags=re.DOTALL)
     if not match_res:
         return None
         
@@ -214,35 +275,49 @@ def calc_metrics(answers, gts):
     gts_dict = defaultdict(list)
     
     for answer, gt in zip(answers, gts):
-        answer_dict = parse_answer(answer)
-        gt_dict = parse_answer(gt)
+        answer_dict = parse_answer(answer) or parse_answer_base(answer)
+        gt_dict = parse_answer(gt) or parse_answer_base(gt)
         
         if answer_dict and gt_dict:
             for k in answer_dict.keys():
+                if k == 'prediction' and (answer_dict['prediction'] is None or gt_dict['prediction'] is None):
+                    continue
                 answers_dict[k].append(answer_dict[k])
                 gts_dict[k].append(gt_dict[k])
     
-    if not answers_dict['prediction']:
-        return {}
+    if answers_dict['prediction']:
+        mse = mean_squared_error(gts_dict['prediction'], answers_dict['prediction'])
+    else:
+        mse = None
     
     bin_acc = accuracy_score(gts_dict['prediction_binary'], answers_dict['prediction_binary'])
-    mse = mean_squared_error(gts_dict['prediction'], answers_dict['prediction'])
     
     pros_rouge_scores = calc_rouge_score(gts_dict['positive developments'], answers_dict['positive developments'])
     cons_rouge_scores = calc_rouge_score(gts_dict['potential concerns'], answers_dict['potential concerns'])
     anal_rouge_scores = calc_rouge_score(gts_dict['analysis'], answers_dict['analysis'])
-                              
-    print(f"\nBinary Accuracy: {bin_acc:.2f}  |  Mean Square Error: {mse:.2f}")
+
+    all_answers = answers_dict['positive developments'] + answers_dict['potential concerns'] + answers_dict['analysis']
+    all_refs    = gts_dict['positive developments']    + gts_dict['potential concerns']    + gts_dict['analysis']
+    bert_scores = calc_bert_score(all_refs, all_answers)
+
+    if mse is not None:
+        print(f"\n Mean Square Error: {mse:.2f}")
+
+    print(f"\nBinary Accuracy: {bin_acc:.2f}")
     print(f"\nRouge Score of Positive Developments: {pros_rouge_scores}")
     print(f"\nRouge Score of Potential Concerns: {cons_rouge_scores}")
     print(f"\nRouge Score of Summary Analysis: {anal_rouge_scores}")
-                              
+    print(f"\nBERTScore (all text fields): {bert_scores}")
+
     return {
         "valid_count": len(answers_dict['prediction']),
         "bin_acc": bin_acc,
         "mse": mse,
         "pros_rouge_scores": pros_rouge_scores,
         "cons_rouge_scores": cons_rouge_scores,
-        "anal_rouge_scores": anal_rouge_scores
+        "anal_rouge_scores": anal_rouge_scores,
+        "bert_precision": bert_scores['precision'],
+        "bert_recall":    bert_scores['recall'],
+        "bert_f1":        bert_scores['f1'],
     }
     

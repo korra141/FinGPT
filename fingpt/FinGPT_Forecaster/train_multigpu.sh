@@ -26,11 +26,10 @@ torchrun \
   --standalone \
   --nnodes=1 \
   --nproc_per_node="$NUM_GPUS" \
-  train_lora.py \
-  --run_name dow30v3-llama3-1e-5lr-multigpu \
-  --base_model llama3 \
+  train_lora_llama3.py \
+  --run_name dow30v3-llama3-instruct-fingpt \
   --dataset dow30-202305-202405 \
-  --max_length 4096 \
+  --max_length 8192 \
   --batch_size 1 \
   --gradient_accumulation_steps 4 \
   --learning_rate 5e-5 \

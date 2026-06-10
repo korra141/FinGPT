@@ -71,13 +71,7 @@ From: nvcr.io/nvidia/pytorch:23.03-py3
         scikit-learn \
         tqdm
 
-    # Stub nvcc so DeepSpeed metadata check passes (CUDA not available at build time)
-    mkdir -p /usr/local/cuda/bin
-    printf '#!/bin/bash\necho "nvcc: NVIDIA (R) Cuda compiler driver"\necho "Copyright (c) 2005-2022 NVIDIA Corporation"\necho "Built on Wed_Sep_21_10:33:58_PDT_2022"\necho "Cuda compilation tools, release 11.8, V11.8.89"\necho "Build cuda_11.8.r11.8/compiler.31833905_0"' \
-        > /usr/local/cuda/bin/nvcc
-    chmod +x /usr/local/cuda/bin/nvcc
-
-    DS_BUILD_OPS=0 pip install --no-cache-dir tensorboard wandb rouge_score mpi4py deepspeed==0.14.0
+    DS_BUILD_OPS=0 pip install --no-cache-dir tensorboard wandb rouge_score mpi4py deepspeed==0.15.4
 
 
 %runscript

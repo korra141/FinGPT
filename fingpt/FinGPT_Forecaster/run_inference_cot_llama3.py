@@ -15,26 +15,67 @@ from utils import (
 )
 import datasets as hf_datasets
 
+COT_END = 'assistantfinal'
 
-def calc_metrics_base(answers, gts, parsed_answers=None):
-    """calc_metrics for base-model output format; gts use the original bracketed format."""
+LLAMA2_SYS_RE = re.compile(
+    r'\[INST\]<<SYS>>\n(.*?)\n<</SYS>>\n\n(.*?)\[/INST\]',
+    re.DOTALL,
+)
+
+
+def build_llama3_prompt(tokenizer, raw_prompt: str) -> str:
+    """Convert a Llama2-format prompt to a Llama3 chat-template prompt."""
+    m = LLAMA2_SYS_RE.search(raw_prompt)
+    if m:
+        messages = [
+            {"role": "system", "content": m.group(1).strip()},
+            {"role": "user",   "content": m.group(2).strip()},
+        ]
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+        )
+    return raw_prompt
+
+
+def extract_cot_answer(text: str) -> str:
+    """Strip CoT preamble and return only the final structured answer."""
+    split = re.search(r'assistantfinal', text, re.IGNORECASE)
+    if split:
+        text = text[split.end():]
+    else:
+        last = None
+        for m in re.finditer(r'\[Positive Developments\]', text, re.IGNORECASE):
+            last = m
+        if last:
+            text = text[last.start():]
+    text = re.sub(r'\*+\[([^\]]+)\]\*+', r'[\1]', text)
+    return text.strip()
+
+
+def extract_cot_reasoning(text: str) -> str:
+    """Return only the CoT reasoning portion (between prompt end and assistantfinal)."""
+    split = re.search(r'assistantfinal', text, re.IGNORECASE)
+    if split:
+        return text[:split.start()].strip()
+    return ''
+
+
+def calc_metrics_cot(answers, gts, parsed_answers=None):
     answers_dict = defaultdict(list)
     gts_dict = defaultdict(list)
     mse_preds, mse_gts_list = [], []
 
     if parsed_answers is None:
-        parsed_answers = [parse_answer_base(a) for a in answers]
+        parsed_answers = [parse_answer(a) or parse_answer_base(a) for a in answers]
 
     for answer_dict, gt in zip(parsed_answers, gts):
-        gt_dict = parse_answer(gt)
+        gt_dict = parse_answer(gt) or parse_answer_base(gt)
         if answer_dict and gt_dict:
             for k in answer_dict:
                 if k == 'prediction' and (answer_dict['prediction'] is None or gt_dict['prediction'] is None):
                     continue
                 answers_dict[k].append(answer_dict[k])
                 gts_dict[k].append(gt_dict[k])
-            # Only include in MSE when both sides have a real numeric prediction
-            # (prediction is None when [NUM] masking prevented extraction)
             if answer_dict['prediction'] is not None and gt_dict['prediction'] is not None:
                 mse_preds.append(answer_dict['prediction'])
                 mse_gts_list.append(gt_dict['prediction'])
@@ -44,7 +85,7 @@ def calc_metrics_base(answers, gts, parsed_answers=None):
     print(f"\nParsed {parsed}/{total} samples successfully ({100*parsed/total:.1f}%)")
 
     if not parsed:
-        print("WARNING: No samples parsed — check if model output format matches parse_answer_base expectations.")
+        print("WARNING: No samples parsed — check model output format.")
         return {}
 
     bin_acc = accuracy_score(gts_dict['prediction_binary'], answers_dict['prediction_binary'])
@@ -54,7 +95,7 @@ def calc_metrics_base(answers, gts, parsed_answers=None):
         print(f"Binary Accuracy: {bin_acc:.2f}  |  MSE: {mse:.2f} ({len(mse_preds)}/{parsed} samples had numeric predictions)")
     else:
         mse = None
-        print(f"Binary Accuracy: {bin_acc:.2f}  |  MSE: N/A (no numeric predictions — [NUM] masked?)")
+        print(f"Binary Accuracy: {bin_acc:.2f}  |  MSE: N/A")
 
     pros_rouge = calc_rouge_score(gts_dict['positive developments'], answers_dict['positive developments'])
     cons_rouge = calc_rouge_score(gts_dict['potential concerns'], answers_dict['potential concerns'])
@@ -84,11 +125,11 @@ def calc_metrics_base(answers, gts, parsed_answers=None):
     }
 
 
-def run_inference(args):
+def run_inference_cot(args):
 
     token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
 
-    model_name = parse_model_name('llama2', args.from_remote)
+    model_name = parse_model_name('llama3', args.from_remote)  # <-- llama3
 
     if args.load_in_4bit:
         bnb_config = BitsAndBytesConfig(
@@ -103,8 +144,6 @@ def run_inference(args):
     else:
         model_kwargs = dict(torch_dtype=torch.float32)
 
-    # Omitting "cpu" from max_memory prevents device_map="auto" from
-    # offloading layers to CPU RAM — all layers stay on GPU.
     n_gpus = torch.cuda.device_count()
     max_memory = {i: "75GiB" for i in range(n_gpus)} if n_gpus > 0 else None
 
@@ -129,7 +168,6 @@ def run_inference(args):
         model = base_model
     model = model.eval()
 
-    # Load test data
     dataset_list = load_dataset(args.dataset, args.from_remote)
     dataset_test = hf_datasets.concatenate_datasets([d['test'] for d in dataset_list])
 
@@ -138,85 +176,97 @@ def run_inference(args):
 
     print(f"Running inference on {len(dataset_test)} samples...")
 
-    generated_texts, reference_texts, prompt_texts = [], [], []
+    generated_texts, cot_texts, reference_texts, prompt_texts = [], [], [], []
 
     for feature in tqdm(dataset_test):
-        prompt = feature['prompt']
+        raw_prompt = feature['prompt']
         if args.mask_numbers:
-            prompt = mask_numbers_in_prompt(prompt)
+            raw_prompt = mask_numbers_in_prompt(raw_prompt)
         if args.mask_fin_words:
-            prompt = mask_fin_words_in_prompt(prompt)
+            raw_prompt = mask_fin_words_in_prompt(raw_prompt)
         gt = feature['answer']
 
+        # <-- convert Llama-2 dataset prompt to Llama-3 chat template
+        llama3_prompt = build_llama3_prompt(tokenizer, raw_prompt)
+
         inputs = tokenizer(
-            prompt, return_tensors='pt',
+            llama3_prompt, return_tensors='pt',  # <-- encode the converted prompt
             padding=False, max_length=args.max_length, truncation=True
         )
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            res = model.generate(**inputs, max_new_tokens=512, use_cache=True)
-        output = tokenizer.decode(res[0], skip_special_tokens=True)
+            res = model.generate(
+                **inputs,
+                max_new_tokens=args.max_new_tokens,
+                use_cache=True,
+                do_sample=False,
+                temperature=None,
+                top_p=None,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        full_output = tokenizer.decode(res[0], skip_special_tokens=True)
 
-        if '[/INST]' in output:
-            answer = re.sub(r'.*\[/INST\]\s*', '', output, flags=re.DOTALL)
+        # <-- strip using the converted llama3_prompt, not raw_prompt
+        if output_startswith_prompt(full_output, llama3_prompt):
+            raw_generation = full_output[len(llama3_prompt):].strip()
         else:
-            answer = output[len(prompt):].strip() if output.startswith(prompt) else output
+            raw_generation = full_output.strip()
+
+        cot_part = extract_cot_reasoning(raw_generation)
+        answer = extract_cot_answer(raw_generation)
 
         generated_texts.append(answer)
+        cot_texts.append(cot_part)
         reference_texts.append(gt)
-        prompt_texts.append(prompt)
+        prompt_texts.append(raw_prompt)
 
-    # Fine-tuned llama2 produces bracketed output ([Positive Developments]: ...);
-    # base llama2 produces freetext (Positive Developments: ...).
-    if args.peft_model:
-        parsed_answers = [parse_answer(g) for g in generated_texts]
-    else:
-        parsed_answers = [parse_answer_base(g) for g in generated_texts]
+    parsed_answers = [parse_answer(g) or parse_answer_base(g) for g in generated_texts]
 
-    # Save raw outputs to disk
     os.makedirs(args.output_dir, exist_ok=True)
     output_path = os.path.join(args.output_dir, f"{args.run_name}_outputs.json")
     with open(output_path, 'w') as f:
         json.dump([
-            {"prompt": p, "generated": g, "parsed": parsed, "reference": r}
-            for p, g, parsed, r in zip(prompt_texts, generated_texts, parsed_answers, reference_texts)
+            {"prompt": p, "cot_reasoning": cot, "generated": g, "parsed": parsed, "reference": r}
+            for p, cot, g, parsed, r in zip(prompt_texts, cot_texts, generated_texts, parsed_answers, reference_texts)
         ], f, indent=2)
-    print(f"\nSaved raw outputs to {output_path}")
+    print(f"\nSaved outputs to {output_path}")
 
     unparsed_path = os.path.join(args.output_dir, f"{args.run_name}_unparsed.json")
     with open(unparsed_path, 'w') as f:
         json.dump(
-            [{"prompt": p, "generated": g, "reference": r}
-             for p, g, parsed, r in zip(prompt_texts, generated_texts, parsed_answers, reference_texts)
+            [{"prompt": p, "cot_reasoning": cot, "generated": g, "reference": r}
+             for p, cot, g, parsed, r in zip(prompt_texts, cot_texts, generated_texts, parsed_answers, reference_texts)
              if parsed is None],
             f, indent=2,
         )
     print(f"Saved unparsed outputs to {unparsed_path}")
 
-    # Log a few generated samples for quick sanity check
     print("\n=== Sample Outputs (first 3) ===")
     for i in range(min(3, len(generated_texts))):
         print(f"\n--- Sample {i+1} ---")
         print(f"[PROMPT END]:\n...{prompt_texts[i][-200:]}")
+        if cot_texts[i]:
+            print(f"[COT REASONING]:\n{cot_texts[i][:300]}...")
         print(f"[GENERATED]:\n{generated_texts[i][:500]}")
         print(f"[REFERENCE]:\n{reference_texts[i][:300]}")
 
     print("\n=== Inference Metrics ===")
-    metrics = calc_metrics_base(generated_texts, reference_texts, parsed_answers=parsed_answers)
+    metrics = calc_metrics_cot(generated_texts, reference_texts, parsed_answers=parsed_answers)
     print(metrics)
 
     if args.wandb:
         run_config = dict(
-            base_model='llama2',
+            base_model='llama3',
             peft_model=args.peft_model,
             dataset=args.dataset,
             num_samples=len(dataset_test),
             max_length=args.max_length,
+            max_new_tokens=args.max_new_tokens,
             load_in_4bit=args.load_in_4bit,
             load_in_8bit=args.load_in_8bit,
             mask_numbers=args.mask_numbers,
-        mask_fin_words=args.mask_fin_words,
+            mask_fin_words=args.mask_fin_words,
         )
         wandb.init(project='fingpt-forecaster', name=args.run_name, config=run_config)
         wandb.log(metrics)
@@ -228,27 +278,34 @@ def run_inference(args):
     return metrics
 
 
-if __name__ == "__main__":
+def output_startswith_prompt(output: str, prompt: str) -> bool:
+    """Check if the decoded output starts with the prompt (handles minor whitespace drift)."""
+    return output[:len(prompt)].strip() == prompt.strip()
 
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_name", default='inference', type=str)
+    parser.add_argument("--run_name", default='inference-cot-llama3', type=str)
     parser.add_argument(
         "--peft_model", default=None, type=str,
-        help="HF repo ID or local path of a LoRA adapter (optional); omit to run the base llama2 model"
+        help="HF repo ID or local path of a CoT LoRA adapter (optional)"
     )
     parser.add_argument("--dataset", required=True, type=str)
-    parser.add_argument("--max_length", default=4096, type=int)
+    parser.add_argument("--max_length", default=8192, type=int,
+                        help="Max input sequence length (Llama-3 native context is 8192)")
+    parser.add_argument("--max_new_tokens", default=2048, type=int,
+                        help="Max tokens to generate; CoT outputs are long so set higher than standard inference")
     parser.add_argument("--num_samples", default=-1, type=int, help="Number of test samples (-1 for all)")
     parser.add_argument("--from_remote", default=True, type=bool)
-    parser.add_argument("--output_dir", default="outputs", type=str, help="Directory to save generated outputs")
+    parser.add_argument("--output_dir", default="outputs", type=str)
     parser.add_argument("--hf_token", default=None, type=str, help="HuggingFace API token (or set HF_TOKEN env var)")
-    parser.add_argument("--load_in_4bit", action="store_true", help="Load model in 4-bit quantization (~4GB VRAM)")
-    parser.add_argument("--load_in_8bit", action="store_true", help="Load model in 8-bit quantization (~7GB VRAM)")
+    parser.add_argument("--load_in_4bit", action="store_true")
+    parser.add_argument("--load_in_8bit", action="store_true")
     parser.add_argument("--mask_numbers", action="store_true",
-                        help="Replace all numbers (and surrounding ±$%%) in prompts with [NUM]")
+                        help="Replace numbers in prompts with [NUM]")
     parser.add_argument("--mask_fin_words", action="store_true",
-                        help="Replace financial directional/sentiment words in prompts with [WORD]")
-    parser.add_argument("--wandb", action="store_true", help="Log metrics and outputs artifact to wandb")
+                        help="Replace financial directional words in prompts with [WORD]")
+    parser.add_argument("--wandb", action="store_true", help="Log metrics and outputs to wandb")
     args = parser.parse_args()
 
-    run_inference(args)
+    run_inference_cot(args)

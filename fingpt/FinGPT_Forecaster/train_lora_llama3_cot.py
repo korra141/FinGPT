@@ -282,7 +282,12 @@ def main(args):
             trust_remote_code=True,
             token=token,
         )
-        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+        # use_gradient_checkpointing=False skips the OOM-inducing float32 cast of
+        # layer norms / embeddings; we re-enable GC manually below.
+        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)
+        torch.cuda.empty_cache()
+        gc.collect()
+        model.gradient_checkpointing_enable()
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_name,

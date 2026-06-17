@@ -150,6 +150,7 @@ fingpt/FinGPT_Forecaster/*.out
 fingpt/FinGPT_Forecaster/*.err
 fingpt/FinGPT_Forecaster/chatgpt_cot
 fingpt/FinGPT_Forecaster/inference-eval-llama3-multigpu_outputs.json
+fingpt/FinGPT_Forecaster/arima_dow30_42w/
 #SBATCH --partition=gpupreempt
 # Benchmark data
 fingpt/FinGPT_Benchmark/data/*/**

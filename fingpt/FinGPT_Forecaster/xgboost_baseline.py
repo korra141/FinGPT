@@ -88,9 +88,9 @@ _NUM_FEATURE_NAMES = [
     'week_of_year',
 ]
 
-# XGBoost multiclass needs 0-indexed integer labels
-_LABEL_MAP  = {-1: 0, 0: 1, 1: 2}
-_LABEL_RMAP = {0: -1, 1: 0, 2: 1}
+# Binary direction labels: down=-1 → 0, up=+1 → 1
+_LABEL_MAP  = {-1: 0, 1: 1}
+_LABEL_RMAP = {0: -1, 1: 1}
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,11 @@ def extract_rows(dataset_split):
         neg_count   = len(_NEG_RE.findall(full_text))
         n_headlines = len(re.findall(r'^\s*\d+\.', full_text, re.MULTILINE))
 
+        bin_label = parsed['prediction_binary']
+        if bin_label == 0:
+            n_skip += 1
+            continue
+
         num_rows.append({
             'pct_change_last_week': pct_change,
             'price_level':          price_level,
@@ -138,12 +143,12 @@ def extract_rows(dataset_split):
             'net_sentiment':        float(pos_count - neg_count),
             'n_headlines':          float(n_headlines),
             'month':                float(dt.month),
-            'week_of_year':         float(int(dt.isocalendar().week)),
+            'week_of_year':         float(int(dt.isocalendar()[1])),
         })
 
         # Headlines = everything before the price line
         texts.append(full_text[:m.start()].strip())
-        bins.append(parsed['prediction_binary'])
+        bins.append(bin_label)
         margins.append(float(parsed['prediction']))
 
     return num_rows, texts, bins, margins, n_skip
@@ -211,14 +216,31 @@ def main(args):
     print(f"\nFeature matrix: {X_train.shape[1]} features "
           f"({n_num} numerical + {n_tfidf} TF-IDF)")
 
-    y_train_cls = np.array([_LABEL_MAP[b] for b in train_bins], dtype=np.int32)
-    y_test_cls  = np.array([_LABEL_MAP[b] for b in test_bins],  dtype=np.int32)
+    # Build label mapping from only the classes present in training data.
+    # _LABEL_MAP assumes all 3 directions exist; if neutral (0) is absent the
+    # mapped labels are {0, 2}, which XGBoost's sklearn wrapper rejects for
+    # binary problems expecting {0, 1}.
+    unique_bins = sorted(set(train_bins))
+    n_classes   = len(unique_bins)
+    dyn_map     = {b: i for i, b in enumerate(unique_bins)}
+    dyn_rmap    = {i: b for b, i in dyn_map.items()}
+
+    y_train_cls = np.array([dyn_map[b] for b in train_bins], dtype=np.int32)
     y_train_reg = np.array(train_margins, dtype=np.float32)
     y_test_reg  = np.array(test_margins,  dtype=np.float32)
 
+    # Test set may contain classes unseen in training (e.g. neutral=0 when train
+    # only has down/up).  Build a mask so we can pass a clean eval_set to XGBoost;
+    # the full test set is still used for final accuracy (unknown-class examples
+    # will simply be predicted as down or up and counted as wrong).
+    test_known  = np.array([b in dyn_map for b in test_bins])
+    y_test_cls  = np.array([dyn_map[b] for b in np.array(test_bins)[test_known]], dtype=np.int32)
+    X_test_eval = X_test[test_known]
+    y_test_reg_eval = y_test_reg[test_known]
+
     # Per-class sample weights to handle class imbalance
-    counts  = np.bincount(y_train_cls, minlength=3).astype(float)
-    weights = len(y_train_cls) / (3.0 * np.where(counts > 0, counts, 1.0))
+    counts  = np.bincount(y_train_cls, minlength=n_classes).astype(float)
+    weights = len(y_train_cls) / (n_classes * np.where(counts > 0, counts, 1.0))
     sample_weights = np.array([weights[y] for y in y_train_cls], dtype=np.float32)
 
     # ---- Direction classifier -------------------------------------------------
@@ -230,7 +252,7 @@ def main(args):
         subsample=0.8,
         colsample_bytree=0.8,
         objective='multi:softmax',
-        num_class=3,
+        num_class=n_classes,
         eval_metric='mlogloss',
         random_state=42,
         n_jobs=-1,
@@ -239,12 +261,12 @@ def main(args):
     clf.fit(
         X_train, y_train_cls,
         sample_weight=sample_weights,
-        eval_set=[(X_test, y_test_cls)],
+        eval_set=[(X_test_eval, y_test_cls)],
         verbose=False,
     )
 
     pred_bins_raw   = clf.predict(X_test)
-    pred_bins_named = np.array([_LABEL_RMAP[int(p)] for p in pred_bins_raw])
+    pred_bins_named = np.array([dyn_rmap[int(p)] for p in pred_bins_raw])
     bin_acc = accuracy_score(test_bins, pred_bins_named)
 
     # ---- Magnitude regressor --------------------------------------------------
@@ -263,7 +285,7 @@ def main(args):
     )
     reg.fit(
         X_train, y_train_reg,
-        eval_set=[(X_test, y_test_reg)],
+        eval_set=[(X_test_eval, y_test_reg_eval)],
         verbose=False,
     )
 

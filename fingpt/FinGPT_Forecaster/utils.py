@@ -250,9 +250,9 @@ def parse_answer(answer):
 def calc_bert_score(references, candidates, lang="en"):
     P, R, F1 = _bert_score(candidates, references, lang=lang, verbose=False)
     return {
-        'precision': round(P.mean().item(), 4),
-        'recall':    round(R.mean().item(), 4),
-        'f1':        round(F1.mean().item(), 4),
+       'precision': round(P.mean().item(), 4),
+       'recall':    round(R.mean().item(), 4),
+       'f1':        round(F1.mean().item(), 4),
     }
 
 
@@ -285,13 +285,16 @@ def calc_metrics(answers, gts):
                 answers_dict[k].append(answer_dict[k])
                 gts_dict[k].append(gt_dict[k])
     
-    if answers_dict['prediction']:
-        mse = mean_squared_error(gts_dict['prediction'], answers_dict['prediction'])
+    pred_pcts = answers_dict['prediction']
+    gt_pcts   = gts_dict['prediction']
+
+    if pred_pcts:
+        mse = mean_squared_error(gt_pcts, pred_pcts)
     else:
         mse = None
-    
+
     bin_acc = accuracy_score(gts_dict['prediction_binary'], answers_dict['prediction_binary'])
-    
+
     pros_rouge_scores = calc_rouge_score(gts_dict['positive developments'], answers_dict['positive developments'])
     cons_rouge_scores = calc_rouge_score(gts_dict['potential concerns'], answers_dict['potential concerns'])
     anal_rouge_scores = calc_rouge_score(gts_dict['analysis'], answers_dict['analysis'])
@@ -302,6 +305,10 @@ def calc_metrics(answers, gts):
 
     if mse is not None:
         print(f"\n Mean Square Error: {mse:.2f}")
+        delta_errors = [p - g for p, g in zip(pred_pcts, gt_pcts)]
+        print(f"  pred_pcts  : {[round(p,2) for p in pred_pcts]}")
+        print(f"  gt_pcts    : {[round(g,2) for g in gt_pcts]}")
+        print(f"  delta_error: {[round(e,2) for e in delta_errors]}")
 
     print(f"\nBinary Accuracy: {bin_acc:.2f}")
     print(f"\nRouge Score of Positive Developments: {pros_rouge_scores}")
@@ -310,9 +317,11 @@ def calc_metrics(answers, gts):
     print(f"\nBERTScore (all text fields): {bert_scores}")
 
     return {
-        "valid_count": len(answers_dict['prediction']),
-        "bin_acc": bin_acc,
-        "mse": mse,
+        "valid_count":  len(pred_pcts),
+        "bin_acc":      bin_acc,
+        "mse":          mse,
+        "pred_pcts":    pred_pcts,
+        "gt_pcts":      gt_pcts,
         "pros_rouge_scores": pros_rouge_scores,
         "cons_rouge_scores": cons_rouge_scores,
         "anal_rouge_scores": anal_rouge_scores,

@@ -48,4 +48,5 @@ torchrun \
   --warmup_ratio 0.03 \
   --scheduler constant \
   --evaluation_strategy steps \
+   --gen_eval_batch_size 8 \
   --ds_config config_zero3_fp16.json

@@ -6,7 +6,7 @@
 # --- Environment ---
 export NCCL_IGNORE_DISABLED_P2P=1
 export NCCL_DEBUG=WARN
-export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128"
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 export TOKENIZERS_PARALLELISM=0
 export DS_BUILD_OPS=0
@@ -41,9 +41,11 @@ torchrun \
   --batch_size 4 \
   --gradient_accumulation_steps 4 \
   --learning_rate 1e-5 \
-  --num_epochs 5 \
+  --num_epochs 30 \
   --log_interval 10 \
   --warmup_ratio 0.03 \
   --scheduler constant \
   --gen_eval_batch_size 8 \
+  --evaluation_strategy steps \
+  --eval_steps 0.1 \
   --ds_config config_zero3.json

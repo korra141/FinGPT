@@ -1,0 +1,1210 @@
+{
+  "global": {
+    "macro_bin_acc": 0.6034,
+    "macro_mse": 44.5478,
+    "total_n_test": 58,
+    "gt_source": "target_pct"
+  },
+  "per_ticker": [
+    {
+      "ticker": "AXP",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 1.6201,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-03-31",
+          "last_price": 226.99,
+          "forecast_price": 226.99,
+          "pred_pct": 0.0,
+          "gt_pct": 1.7842,
+          "delta_error": -1.7842,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 3,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-28",
+          "window_end": "2024-04-21",
+          "last_price": 231.04,
+          "forecast_price": 235.09,
+          "pred_pct": 1.7529,
+          "gt_pct": 1.991,
+          "delta_error": -0.2381,
+          "pred_bin": 1,
+          "gt_bin": 1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "AMGN",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 1.7953,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 269.95,
+          "forecast_price": 269.95,
+          "pred_pct": 0.0,
+          "gt_pct": -0.9891,
+          "delta_error": 0.9891,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 267.28,
+          "forecast_price": 264.61,
+          "pred_pct": -0.999,
+          "gt_pct": 0.6173,
+          "delta_error": -1.6163,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "AAPL",
+      "arima_order": "(2,1,1)",
+      "n_test": 1,
+      "n_fallback": 1,
+      "n_hf_gt": 0,
+      "mse": 10.2153,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-28",
+          "window_end": "2024-04-07",
+          "last_price": 169.58,
+          "forecast_price": 163.88,
+          "pred_pct": -3.3612,
+          "gt_pct": -0.1651,
+          "delta_error": -3.1961,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 3,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "BA",
+      "arima_order": "(2,1,1)",
+      "n_test": 3,
+      "n_fallback": 3,
+      "n_hf_gt": 0,
+      "mse": 79.2312,
+      "bin_acc": 0.3333,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-03-24",
+          "last_price": 188.85,
+          "forecast_price": 188.85,
+          "pred_pct": 0.0,
+          "gt_pct": -10.2198,
+          "delta_error": 10.2198,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 3,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 169.55,
+          "forecast_price": 150.25,
+          "pred_pct": -11.3831,
+          "gt_pct": 0.1592,
+          "delta_error": -11.5423,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-21",
+          "last_price": 169.82,
+          "forecast_price": 170.09,
+          "pred_pct": 0.159,
+          "gt_pct": 0.0,
+          "delta_error": 0.159,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "CAT",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 31.4622,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 377.92,
+          "forecast_price": 390.74,
+          "pred_pct": 3.3923,
+          "gt_pct": -3.6039,
+          "delta_error": 6.9962,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-14",
+          "last_price": 364.3,
+          "forecast_price": 350.68,
+          "pred_pct": -3.7387,
+          "gt_pct": 0.0,
+          "delta_error": -3.7387,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "CSCO",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 6.1718,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-07",
+          "last_price": 48.55,
+          "forecast_price": 46.63,
+          "pred_pct": -3.9547,
+          "gt_pct": -0.4737,
+          "delta_error": -3.4809,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-28",
+          "window_end": "2024-04-21",
+          "last_price": 48.32,
+          "forecast_price": 48.09,
+          "pred_pct": -0.476,
+          "gt_pct": -0.952,
+          "delta_error": 0.476,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "CVX",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 20.2516,
+      "bin_acc": 0.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 161.6,
+          "forecast_price": 168.54,
+          "pred_pct": 4.2946,
+          "gt_pct": -1.6337,
+          "delta_error": 5.9282,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 158.96,
+          "forecast_price": 156.32,
+          "pred_pct": -1.6608,
+          "gt_pct": 0.6543,
+          "delta_error": -2.315,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "GS",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 23.1853,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 408.07,
+          "forecast_price": 409.32,
+          "pred_pct": 0.3063,
+          "gt_pct": -4.5531,
+          "delta_error": 4.8595,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-14",
+          "last_price": 389.49,
+          "forecast_price": 370.91,
+          "pred_pct": -4.7703,
+          "gt_pct": 0.0,
+          "delta_error": -4.7703,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "HD",
+      "arima_order": "(2,1,1)",
+      "n_test": 1,
+      "n_fallback": 1,
+      "n_hf_gt": 0,
+      "mse": 17.5684,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 357.87,
+          "forecast_price": 357.87,
+          "pred_pct": 0.0,
+          "gt_pct": -4.1915,
+          "delta_error": 4.1915,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "HON",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 6.6106,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 197.15,
+          "forecast_price": 189.05,
+          "pred_pct": -4.1085,
+          "gt_pct": -0.5022,
+          "delta_error": -3.6064,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 196.16,
+          "forecast_price": 195.17,
+          "pred_pct": -0.5047,
+          "gt_pct": -0.9686,
+          "delta_error": 0.4639,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "IBM",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 9.3124,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 189.14,
+          "forecast_price": 187.32,
+          "pred_pct": -0.9623,
+          "gt_pct": -3.6322,
+          "delta_error": 2.67,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 182.27,
+          "forecast_price": 175.4,
+          "pred_pct": -3.7691,
+          "gt_pct": -0.3786,
+          "delta_error": -3.3906,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "INTC",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 631.8962,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-03-31",
+          "last_price": 44.17,
+          "forecast_price": 47.37,
+          "pred_pct": 7.2447,
+          "gt_pct": -19.1986,
+          "delta_error": 26.4433,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-14",
+          "last_price": 35.69,
+          "forecast_price": 27.21,
+          "pred_pct": -23.7602,
+          "gt_pct": 0.0,
+          "delta_error": -23.7602,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "JNJ",
+      "arima_order": "(2,1,1)",
+      "n_test": 3,
+      "n_fallback": 3,
+      "n_hf_gt": 0,
+      "mse": 4.8526,
+      "bin_acc": 0.3333,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 152.39,
+          "forecast_price": 149.55,
+          "pred_pct": -1.8636,
+          "gt_pct": -3.1957,
+          "delta_error": 1.3321,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 147.52,
+          "forecast_price": 142.65,
+          "pred_pct": -3.3012,
+          "gt_pct": 0.2644,
+          "delta_error": -3.5656,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-21",
+          "last_price": 147.91,
+          "forecast_price": 148.3,
+          "pred_pct": 0.2637,
+          "gt_pct": 0.0,
+          "delta_error": 0.2637,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "KO",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 51.6793,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 59.51,
+          "forecast_price": 58.53,
+          "pred_pct": -1.6468,
+          "gt_pct": -2.0669,
+          "delta_error": 0.4201,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-28",
+          "window_end": "2024-04-14",
+          "last_price": 58.28,
+          "forecast_price": 55.82,
+          "pred_pct": -4.221,
+          "gt_pct": 5.9369,
+          "delta_error": -10.1579,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "JPM",
+      "arima_order": "(2,1,1)",
+      "n_test": 1,
+      "n_fallback": 1,
+      "n_hf_gt": 0,
+      "mse": 55.1256,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 197.45,
+          "forecast_price": 197.45,
+          "pred_pct": 0.0,
+          "gt_pct": -7.4247,
+          "delta_error": 7.4247,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "MCD",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 1.3275,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 266.69,
+          "forecast_price": 266.69,
+          "pred_pct": 0.0,
+          "gt_pct": 0.2625,
+          "delta_error": -0.2625,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-28",
+          "window_end": "2024-04-14",
+          "last_price": 267.39,
+          "forecast_price": 268.79,
+          "pred_pct": 0.5236,
+          "gt_pct": 2.1317,
+          "delta_error": -1.6081,
+          "pred_bin": 1,
+          "gt_bin": 1,
+          "correct_dir": 1,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "MMM",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 2.6076,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 91.03,
+          "forecast_price": 93.37,
+          "pred_pct": 2.5706,
+          "gt_pct": 0.3076,
+          "delta_error": 2.263,
+          "pred_bin": 1,
+          "gt_bin": 1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-14",
+          "last_price": 91.31,
+          "forecast_price": 91.59,
+          "pred_pct": 0.3066,
+          "gt_pct": 0.0,
+          "delta_error": 0.3066,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "MRK",
+      "arima_order": "(2,1,1)",
+      "n_test": 1,
+      "n_fallback": 1,
+      "n_hf_gt": 0,
+      "mse": 139.0037,
+      "bin_acc": 0.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-28",
+          "window_end": "2024-04-07",
+          "last_price": 127.99,
+          "forecast_price": 116.11,
+          "pred_pct": -9.282,
+          "gt_pct": 2.508,
+          "delta_error": -11.79,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 3,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "MSFT",
+      "arima_order": "(2,1,1)",
+      "n_test": 3,
+      "n_fallback": 3,
+      "n_hf_gt": 0,
+      "mse": 6.0962,
+      "bin_acc": 0.6667,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 425.52,
+          "forecast_price": 430.32,
+          "pred_pct": 1.128,
+          "gt_pct": -0.8507,
+          "delta_error": 1.9788,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-14",
+          "last_price": 421.9,
+          "forecast_price": 418.28,
+          "pred_pct": -0.858,
+          "gt_pct": 0.0,
+          "delta_error": -0.858,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-28",
+          "window_end": "2024-04-14",
+          "last_price": 421.9,
+          "forecast_price": 421.9,
+          "pred_pct": 0.0,
+          "gt_pct": -3.6928,
+          "delta_error": 3.6928,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "NKE",
+      "arima_order": "(2,1,1)",
+      "n_test": 1,
+      "n_fallback": 1,
+      "n_hf_gt": 0,
+      "mse": 41.0211,
+      "bin_acc": 0.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-07",
+          "last_price": 88.84,
+          "forecast_price": 88.84,
+          "pred_pct": 0.0,
+          "gt_pct": 6.4048,
+          "delta_error": -6.4048,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "PG",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 6.0514,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 155.1,
+          "forecast_price": 148.99,
+          "pred_pct": -3.9394,
+          "gt_pct": -0.4965,
+          "delta_error": -3.4429,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-14",
+          "last_price": 154.33,
+          "forecast_price": 153.56,
+          "pred_pct": -0.4989,
+          "gt_pct": 0.0,
+          "delta_error": -0.4989,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "TRV",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 9.7684,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 230.89,
+          "forecast_price": 230.89,
+          "pred_pct": 0.0,
+          "gt_pct": -4.2401,
+          "delta_error": 4.2401,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 221.1,
+          "forecast_price": 211.31,
+          "pred_pct": -4.4279,
+          "gt_pct": -3.1796,
+          "delta_error": -1.2483,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "UNH",
+      "arima_order": "(2,1,1)",
+      "n_test": 1,
+      "n_fallback": 1,
+      "n_hf_gt": 0,
+      "mse": 99.1942,
+      "bin_acc": 0.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-07",
+          "last_price": 455.74,
+          "forecast_price": 455.74,
+          "pred_pct": 0.0,
+          "gt_pct": 9.9596,
+          "delta_error": -9.9596,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "CRM",
+      "arima_order": "(2,1,1)",
+      "n_test": 1,
+      "n_fallback": 1,
+      "n_hf_gt": 0,
+      "mse": 109.1361,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-07",
+          "last_price": 301.91,
+          "forecast_price": 301.91,
+          "pred_pct": 0.0,
+          "gt_pct": -10.4468,
+          "delta_error": 10.4468,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "VZ",
+      "arima_order": "(2,1,1)",
+      "n_test": 3,
+      "n_fallback": 3,
+      "n_hf_gt": 0,
+      "mse": 2.4911,
+      "bin_acc": 0.3333,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-03-24",
+          "last_price": 39.73,
+          "forecast_price": 39.73,
+          "pred_pct": 0.0,
+          "gt_pct": -0.0252,
+          "delta_error": 0.0252,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 3,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 39.72,
+          "forecast_price": 39.71,
+          "pred_pct": -0.0252,
+          "gt_pct": 1.9386,
+          "delta_error": -1.9637,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-21",
+          "last_price": 40.49,
+          "forecast_price": 41.26,
+          "pred_pct": 1.9017,
+          "gt_pct": 0.0,
+          "delta_error": 1.9017,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "V",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 1.264,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-03-31",
+          "last_price": 279.08,
+          "forecast_price": 279.08,
+          "pred_pct": 0.0,
+          "gt_pct": -1.118,
+          "delta_error": 1.118,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-14",
+          "last_price": 275.96,
+          "forecast_price": 272.84,
+          "pred_pct": -1.1306,
+          "gt_pct": 0.0,
+          "delta_error": -1.1306,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "WBA",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 67.1033,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-07",
+          "last_price": 19.13,
+          "forecast_price": 16.23,
+          "pred_pct": -15.1594,
+          "gt_pct": -4.6524,
+          "delta_error": -10.5071,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-21",
+          "last_price": 18.24,
+          "forecast_price": 17.35,
+          "pred_pct": -4.8794,
+          "gt_pct": 0.0,
+          "delta_error": -4.8794,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "WMT",
+      "arima_order": "(2,1,1)",
+      "n_test": 3,
+      "n_fallback": 3,
+      "n_hf_gt": 0,
+      "mse": 1.5878,
+      "bin_acc": 0.3333,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 59.85,
+          "forecast_price": 59.02,
+          "pred_pct": -1.3868,
+          "gt_pct": 0.4845,
+          "delta_error": -1.8713,
+          "pred_bin": -1,
+          "gt_bin": 1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-14",
+          "last_price": 60.14,
+          "forecast_price": 60.43,
+          "pred_pct": 0.4822,
+          "gt_pct": 0.0,
+          "delta_error": 0.4822,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 60.14,
+          "forecast_price": 60.14,
+          "pred_pct": 0.0,
+          "gt_pct": -1.0143,
+          "delta_error": 1.0143,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "DIS",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 3.4474,
+      "bin_acc": 1.0,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 118.38,
+          "forecast_price": 114.4,
+          "pred_pct": -3.3621,
+          "gt_pct": -3.6915,
+          "delta_error": 0.3294,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-21",
+          "window_end": "2024-04-14",
+          "last_price": 114.01,
+          "forecast_price": 109.64,
+          "pred_pct": -3.833,
+          "gt_pct": -1.228,
+          "delta_error": -2.605,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    },
+    {
+      "ticker": "DOW",
+      "arima_order": "(2,1,1)",
+      "n_test": 2,
+      "n_fallback": 2,
+      "n_hf_gt": 0,
+      "mse": 39.3104,
+      "bin_acc": 0.5,
+      "predictions": [
+        {
+          "target_date": "2024-04-14",
+          "window_end": "2024-04-07",
+          "last_price": 59.69,
+          "forecast_price": 61.45,
+          "pred_pct": 2.9486,
+          "gt_pct": -3.3506,
+          "delta_error": 6.2992,
+          "pred_bin": 1,
+          "gt_bin": -1,
+          "correct_dir": 0,
+          "n_steps": 1,
+          "fallback": true,
+          "gt_source": "target_pct"
+        },
+        {
+          "target_date": "2024-04-28",
+          "window_end": "2024-04-14",
+          "last_price": 57.69,
+          "forecast_price": 53.69,
+          "pred_pct": -6.9336,
+          "gt_pct": -0.6934,
+          "delta_error": -6.2402,
+          "pred_bin": -1,
+          "gt_bin": -1,
+          "correct_dir": 1,
+          "n_steps": 2,
+          "fallback": true,
+          "gt_source": "target_pct"
+        }
+      ]
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-# FinGPT — Reproducibility Notes (March 2026)
+
 
 This document tracks the reproducibility status of the FinGPT codebase and studies finpgt financial forecasting.
 
@@ -6,22 +6,20 @@ The dataset looks like this
 \href{https://huggingface.co/datasets/FinGPT/fingpt-forecaster-dow30-202305-202405} 
 The prompt carries information about the stock like market cap, the trend of last week and the news related to it and asks to predict the next two weeks outcome. The outcome is seen in prediction of the stock and the analysis of the stock, outline the positive developement and concerns.
 
-The metrics are calculated with how close the prediction of text from LLM is to the reference text.
+Evaluation uses a combination of text similarity between the model output and the reference answer (ROUGE), directional accuracy of the predicted price movement (binary accuracy), and magnitude error of the predicted price change (MSE).
 
-<explain the metrics>
 
----
 
-## Implementations
-
-### FinGPT Forecaster (`fingpt/FinGPT_Forecaster/`)
+### FinGPT Forecaster (`fingpt/FinGPT_Forecaster/`) Reproducibility Notes (June 2026)
 - Training with LoRA fine-tuning is functional (`train_lora.py`, `train.sh`)
 - Inference script available (`run_inference.py`)
 - RL Stock Price is not implemented as per the paper. 
-- Chain of Thought has been implemented by this repo.
 ---
 
-The results from their paper mainly talk about sentiment analysis, in this we explore the finanicial forecasting 
+The results from their paper mainly talk about sentiment analysis, in this we explore the finanicial forecasting results.
+
+### Implementations
+ - Bert Score as
 
 ## Results
 

@@ -38,15 +38,17 @@ torchrun \
   --base_model llama2 \
   --cot_dataset cot_dow_dataset \
   --dataset dow30-202305-202405 \
-  --max_length 5000 \
+  --max_length 8192 \
   --load_in_4bit \
   --batch_size 4 \
   --gradient_accumulation_steps 4 \
   --learning_rate 1e-5 \
-  --num_epochs 40 \
+  --num_epochs 10 \
   --log_interval 10 \
   --warmup_ratio 0.03 \
   --scheduler constant \
   --evaluation_strategy steps \
   --gen_eval_batch_size 8 \
+  --ul_weight 0.2 \
+  --resume_from_checkpoint finetuned_models/dow30-llama2-cot-4bit-l3u45tzy_202606241239 \
   --ds_config config_zero3_fp16.json

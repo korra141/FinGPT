@@ -237,8 +237,10 @@ class CotTrainer(Trainer):
     training dataset (added by build_dataset via tokenize_cot).
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, ul_weight=0.1, ul_window=32, **kwargs):
         super().__init__(*args, **kwargs)
+        self.ul_weight   = ul_weight
+        self.ul_window   = ul_window
         self._cot_sum    = 0.0
         self._answer_sum = 0.0
         self._seg_n      = 0
@@ -263,50 +265,58 @@ class CotTrainer(Trainer):
                 self._answer_sum += loss_fct(shift_logits.view(-1, logits.size(-1)), answer_shift).item()
                 self._seg_n      += 1
 
-                # Unlikelihood loss: penalise tokens in the CoT segment that have
-                # already appeared earlier in the same sequence (window = 32 tokens).
-                # Operates position-by-position over the CoT span only.
-                ul_loss = self._unlikelihood_loss(shift_logits, cot_labels, window=32)
-                if ul_loss is not None:
-                    loss = loss + 0.1 * ul_loss
+                if self.ul_weight > 0:
+                    ul_loss = self._unlikelihood_loss(
+                        shift_logits, cot_labels, window=self.ul_window
+                    )
+                    if ul_loss is not None:
+                        loss = loss + self.ul_weight * ul_loss
 
         return (loss, outputs) if return_outputs else loss
 
     @staticmethod
     def _unlikelihood_loss(shift_logits, cot_labels, window=32):
         """
-        For each CoT position, collect tokens seen in the preceding `window`
-        positions and push their probability down with an unlikelihood term.
-        shift_logits: (B, T-1, V)  cot_labels: (B, T)
+        Penalizes repeated tokens in the CoT segment.
+
+        For each CoT position t, checks whether that token appeared anywhere in
+        the preceding `window` CoT positions. If so, pushes its probability down
+        with -log(1 - p(token)).
+
+        Vectorized over the window dimension (O(window) iterations, not O(B*T)).
+        Memory-efficient: avoids materializing the full (B, T, V) softmax by
+        computing log-prob of the target token via gather + logsumexp.
+
+        shift_logits : (B, T-1, V)
+        cot_labels   : (B, T)  — IGNORE_INDEX outside CoT span
         """
-        B, T_minus1, V = shift_logits.shape
-        cot_mask = (cot_labels[:, 1:] != IGNORE_INDEX)  # (B, T-1)
+        B, Tm1, V = shift_logits.shape
+        cot_mask = (cot_labels[:, 1:] != IGNORE_INDEX)  # (B, Tm1)
         if not cot_mask.any():
             return None
 
-        input_ids = cot_labels  # (B, T) — tokens present in the full sequence
-        log_probs = torch.nn.functional.log_softmax(shift_logits, dim=-1)  # (B, T-1, V)
+        safe_ids = cot_labels[:, 1:].clamp(min=0)  # (B, Tm1), IGNORE_INDEX → 0
 
-        ul_terms = []
-        for b in range(B):
-            for t in range(T_minus1):
-                if not cot_mask[b, t]:
-                    continue
-                start = max(0, t - window)
-                # tokens seen in the window before position t
-                ctx = input_ids[b, start:t]
-                ctx = ctx[ctx != IGNORE_INDEX]
-                if ctx.numel() == 0:
-                    continue
-                # clamp to valid vocab range
-                ctx = ctx.clamp(0, V - 1)
-                # 1 - p(token) for each repeated token; average over them
-                repeated_log_probs = log_probs[b, t][ctx]
-                ul_terms.append(torch.log(1 - repeated_log_probs.exp().clamp(max=1 - 1e-7)).mean())
+        # any_repeat[b, t]: True if safe_ids[b, t] appeared in CoT positions [t-window, t)
+        any_repeat = torch.zeros(B, Tm1, dtype=torch.bool, device=shift_logits.device)
+        for offset in range(1, min(window + 1, Tm1)):
+            ctx_tok = torch.zeros_like(safe_ids)
+            ctx_tok[:, offset:] = safe_ids[:, :Tm1 - offset]
+            ctx_valid = torch.zeros(B, Tm1, dtype=torch.bool, device=shift_logits.device)
+            ctx_valid[:, offset:] = cot_mask[:, :Tm1 - offset]
+            any_repeat |= (safe_ids == ctx_tok) & cot_mask & ctx_valid
 
-        if not ul_terms:
+        if not any_repeat.any():
             return None
-        return -torch.stack(ul_terms).mean()
+
+        # Log prob of each target token without materializing the full (B, Tm1, V) softmax.
+        target_logits = shift_logits.gather(2, safe_ids.unsqueeze(2)).squeeze(2)  # (B, Tm1)
+        log_z = torch.logsumexp(shift_logits, dim=2)                              # (B, Tm1)
+        log_p = (target_logits - log_z).clamp(max=-1e-7)                          # log p ≤ 0
+
+        ul = -torch.log1p(-log_p.exp())  # -log(1 - p)
+
+        return (ul * any_repeat.float()).sum() / any_repeat.float().sum()
 
     def log(self, logs, **kwargs):
         if self._seg_n > 0 and 'loss' in logs:
@@ -580,8 +590,18 @@ def main(args):
     current_time = datetime.now()
     formatted_time = current_time.strftime('%Y%m%d%H%M')
 
+    # When resuming from a checkpoint subdir (e.g. .../checkpoint-500), use
+    # the parent as output_dir so subsequent checkpoints land in the same run.
+    resume = args.resume_from_checkpoint or None
+    if resume and os.path.basename(resume).startswith('checkpoint-'):
+        output_dir = os.path.dirname(os.path.abspath(resume))
+    elif resume and os.path.isdir(resume):
+        output_dir = os.path.abspath(resume)
+    else:
+        output_dir = f'finetuned_models/{args.run_name}_{formatted_time}'
+
     training_args = TrainingArguments(
-        output_dir=f'finetuned_models/{args.run_name}_{formatted_time}',
+        output_dir=output_dir,
         logging_steps=args.log_interval,
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
@@ -632,6 +652,8 @@ def main(args):
         train_dataset=dataset_train,
         eval_dataset=dataset_test,
         tokenizer=tokenizer,
+        ul_weight=args.ul_weight,
+        ul_window=args.ul_window,
         data_collator=CotDataCollator(
             DataCollatorForSeq2Seq(tokenizer, padding=True, return_tensors="pt")
         ),
@@ -646,7 +668,7 @@ def main(args):
     )
 
     torch.cuda.empty_cache()
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume)
     model.save_pretrained(training_args.output_dir)
 
 
@@ -680,7 +702,13 @@ if __name__ == "__main__":
                         help="Supervise only the final answer tokens; by default loss is on both CoT reasoning and final answer")
     parser.add_argument("--load_in_4bit", action="store_true",
                         help="QLoRA: load base model in 4-bit NF4 to cut VRAM ~50%% and allow larger batches")
-    parser.add_argument("--cot_budget", default=700, type=int,
+    parser.add_argument("--ul_weight", default=0.1, type=float,
+                        help="Weight for the CoT unlikelihood (repetition) loss. Set 0 to disable.")
+    parser.add_argument("--ul_window", default=32, type=int,
+                        help="Token window for unlikelihood: penalize repeating any token seen in the last N CoT tokens")
+    parser.add_argument("--resume_from_checkpoint", default=None, type=str,
+                        help="Path to a checkpoint dir (e.g. finetuned_models/my-run-*/checkpoint-500) to resume training from")
+    parser.add_argument("--cot_budget", default=1000, type=int,
                         help="Max new tokens for CoT reasoning in phase-1 generation. "
                              "If model doesn't emit assistantfinal within this budget, "
                              "it is forcibly appended and answer generation continues.")

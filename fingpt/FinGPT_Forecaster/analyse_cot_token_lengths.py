@@ -1,48 +1,36 @@
 """
-Analyse CoT vs final-answer token lengths in the chatgpt_cot dataset.
+Analyse prompt, answer, and total token lengths in a FinGPT forecaster dataset.
 
 Usage (inside your Apptainer container, from the FinGPT_Forecaster directory):
 
-  # With LLaMA-2 tokenizer (matches training for llama2 runs):
-  python3 analyse_cot_token_lengths.py --tokenizer meta-llama/Llama-2-7b-hf
+  # Compare LLaMA-2 and LLaMA-3 tokenizers side-by-side (default dataset: dow30):
+  python3 analyse_cot_token_lengths.py --compare
 
-  # With LLaMA-3 tokenizer (matches training for llama3 runs):
+  # Single tokenizer:
+  python3 analyse_cot_token_lengths.py --tokenizer meta-llama/Llama-2-7b-hf
   python3 analyse_cot_token_lengths.py --tokenizer meta-llama/Meta-Llama-3-8B
 
-  # If you don't want to download a tokenizer, fall back to tiktoken cl100k (GPT-4):
-  python3 analyse_cot_token_lengths.py --tokenizer tiktoken
+  # Different dataset:
+  python3 analyse_cot_token_lengths.py --compare --dataset dow30-202305-202405
 
-  # Limit to one split for a quick check:
-  python3 analyse_cot_token_lengths.py --tokenizer tiktoken --split train
+  # Limit to one split:
+  python3 analyse_cot_token_lengths.py --compare --split train
 """
 
 import argparse
-import re
+import os
 import statistics
-import sys
 
-import datasets
+import datasets as hf_datasets
 
-COT_END_RE = re.compile(r'assistantfinal', re.IGNORECASE)
-
-
-def split_cot_final(answer: str):
-    """Return (cot_text, final_text). final_text is '' if marker absent."""
-    m = COT_END_RE.search(answer)
-    if m:
-        return answer[:m.start()], answer[m.end():]
-    return answer, ''
+LLAMA2_MODEL = 'meta-llama/Llama-2-7b-hf'
+LLAMA3_MODEL = 'meta-llama/Meta-Llama-3-8B'
 
 
 def make_tokenizer(name: str):
-    if name == 'tiktoken':
-        import tiktoken
-        enc = tiktoken.get_encoding('cl100k_base')
-        return lambda text: len(enc.encode(text))
-    else:
-        from transformers import AutoTokenizer
-        tok = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
-        return lambda text: len(tok.encode(text, add_special_tokens=False))
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
+    return lambda text: len(tok.encode(text, add_special_tokens=False))
 
 
 def percentile(data, p):
@@ -61,83 +49,82 @@ def summarise(values, label):
     print(f"    mean    = {statistics.mean(values):.1f}")
     print(f"    median  = {statistics.median(values):.1f}")
     print(f"    stdev   = {statistics.stdev(values):.1f}")
-    print(f"    p25     = {percentile(values, 25):.1f}")
     print(f"    p75     = {percentile(values, 75):.1f}")
     print(f"    p90     = {percentile(values, 90):.1f}")
-    print(f"    min     = {min(values)}")
+    print(f"    p95     = {percentile(values, 95):.1f}")
     print(f"    max     = {max(values)}")
 
 
-def analyse_split(split_ds, split_name, count_tokens):
+def analyse_split(split_ds, split_name, count_tokens, tok_label):
     n = len(split_ds)
     print(f"\n{'=' * 60}")
-    print(f"  Split: {split_name}  ({n} samples)")
+    print(f"  Split: {split_name}  ({n} samples)  [{tok_label}]")
     print('=' * 60)
 
-    cot_tokens, final_tokens, total_tokens = [], [], []
-    no_marker = 0
+    prompt_lens, answer_lens, total_lens = [], [], []
 
     for row in split_ds:
-        answer = row['answer']
-        cot, final = split_cot_final(answer)
-
-        total = count_tokens(answer)
-        total_tokens.append(total)
-
-        if final:
-            cot_tokens.append(count_tokens(cot))
-            final_tokens.append(count_tokens(final))
-        else:
-            no_marker += 1
-            cot_tokens.append(0)
-            final_tokens.append(total)
-
-    print(f"\n  Rows missing 'assistantfinal' marker: {no_marker}/{n} ({100*no_marker/n:.1f}%)")
+        p = count_tokens(row['prompt'])
+        a = count_tokens(row['answer'])
+        prompt_lens.append(p)
+        answer_lens.append(a)
+        total_lens.append(p + a)
 
     print()
-    summarise(total_tokens, "Total answer tokens")
+    summarise(prompt_lens, "Prompt tokens")
     print()
-    summarise([v for v in cot_tokens if v > 0], "CoT reasoning tokens  (before 'assistantfinal')")
+    summarise(answer_lens, "Answer tokens")
     print()
-    summarise(final_tokens, "Final answer tokens   (after 'assistantfinal')")
+    summarise(total_lens, "Total tokens (prompt + answer)")
 
-    # Ratio: what fraction of the answer is CoT vs final
-    ratios = []
-    for c, f in zip(cot_tokens, final_tokens):
-        total = c + f
-        if total > 0:
-            ratios.append(c / total)
-    if ratios:
-        avg_cot_pct = statistics.mean(ratios) * 100
-        avg_final_pct = 100 - avg_cot_pct
-        print(f"\n  Average token split:")
-        print(f"    CoT reasoning : {avg_cot_pct:.1f}%")
-        print(f"    Final answer  : {avg_final_pct:.1f}%")
+    avg_prompt_pct = statistics.mean(p / t * 100 for p, t in zip(prompt_lens, total_lens))
+    print(f"\n  Average split:  prompt {avg_prompt_pct:.1f}%  /  answer {100 - avg_prompt_pct:.1f}%")
+
+    for budget in (4096, 8192):
+        over = sum(1 for t in total_lens if t > budget)
+        print(f"  Exceeds {budget} tokens: {over}/{n} ({100*over/n:.1f}%)")
+
+
+def load_hf_dataset(dataset_name: str):
+    hf_name = f'FinGPT/fingpt-forecaster-{dataset_name}'
+    print(f"Loading dataset: {hf_name}")
+    ds = hf_datasets.load_dataset(hf_name)
+    if 'test' not in ds:
+        ds = ds['train'].train_test_split(0.2, shuffle=True, seed=42)
+    return ds
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='chatgpt_cot/',
-                        help='Path to DatasetDict saved with save_to_disk')
-    parser.add_argument('--tokenizer', default='tiktoken',
-                        help='"tiktoken" or a HuggingFace model name like meta-llama/Meta-Llama-3-8B')
+    parser.add_argument('--dataset', default='dow30-202305-202405',
+                        help='Dataset suffix after "FinGPT/fingpt-forecaster-"')
+    parser.add_argument('--tokenizer', default=LLAMA2_MODEL,
+                        help='HuggingFace model name for the tokenizer')
+    parser.add_argument('--compare', action='store_true',
+                        help='Run both LLaMA-2 and LLaMA-3 tokenizers side-by-side')
     parser.add_argument('--split', default='both', choices=['train', 'test', 'both'])
+    parser.add_argument('--hf_token', default=None,
+                        help='HuggingFace token for gated models (or set HF_TOKEN env var)')
     args = parser.parse_args()
 
-    print(f"Loading dataset from: {args.dataset}")
-    ds = datasets.load_from_disk(args.dataset)
-    print(f"Splits: {list(ds.keys())}")
+    token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
+    if token:
+        os.environ['HF_TOKEN'] = token
 
-    print(f"\nBuilding tokenizer: {args.tokenizer}")
-    count_tokens = make_tokenizer(args.tokenizer)
-    print("Tokenizer ready.\n")
+    ds = load_hf_dataset(args.dataset)
+    splits = [s for s in (['train', 'test'] if args.split == 'both' else [args.split]) if s in ds]
 
-    splits = list(ds.keys()) if args.split == 'both' else [args.split]
-    for split in splits:
-        if split not in ds:
-            print(f"WARNING: split '{split}' not found, skipping.")
-            continue
-        analyse_split(ds[split], split, count_tokens)
+    tokenizers = (
+        [(LLAMA2_MODEL, 'LLaMA-2'), (LLAMA3_MODEL, 'LLaMA-3')]
+        if args.compare
+        else [(args.tokenizer, args.tokenizer.split('/')[-1])]
+    )
+
+    for model_name, label in tokenizers:
+        print(f"\nBuilding tokenizer: {model_name}")
+        count_tokens = make_tokenizer(model_name)
+        for split in splits:
+            analyse_split(ds[split], split, count_tokens, label)
 
     print(f"\n{'=' * 60}\n  Done.\n{'=' * 60}\n")
 

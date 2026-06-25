@@ -219,7 +219,7 @@ def run_inference_cot(args):
             out1 = model.generate(
                 **enc1, use_cache=True,
                 max_new_tokens=args.cot_budget,
-                do_sample=True, temperature=0.3, top_p=0.9,
+                do_sample=False, temperature=None, top_p=None,
                 repetition_penalty=args.repetition_penalty,
                 pad_token_id=tokenizer.eos_token_id,
             )
@@ -369,7 +369,7 @@ if __name__ == "__main__":
                         help="Max new tokens for CoT reasoning in phase-1 generation")
     parser.add_argument("--batch_size", default=8, type=int,
                         help="Number of samples to process in parallel per generate call")
-    parser.add_argument("--repetition_penalty", default=1.4, type=float,
+    parser.add_argument("--repetition_penalty", default=1.2, type=float,
                         help="Repetition penalty for generation (>1.0 discourages loops; 1.3 is aggressive)")
     args = parser.parse_args()
 

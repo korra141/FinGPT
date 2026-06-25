@@ -219,7 +219,7 @@ def run_inference_cot(args):
             out1 = model.generate(
                 **enc1, use_cache=True,
                 max_new_tokens=args.cot_budget,
-                do_sample=False, temperature=None, top_p=None,
+                do_sample=True, temperature=0.3, top_p=0.9,
                 repetition_penalty=args.repetition_penalty,
                 pad_token_id=tokenizer.eos_token_id,
             )
@@ -365,11 +365,11 @@ if __name__ == "__main__":
     parser.add_argument("--max_memory_per_gpu", default="80GiB", type=str,
                         help="Max memory per GPU, e.g. '40GiB'. If unset, auto-detected from GPU total memory.")
     parser.add_argument("--wandb", action="store_true", help="Log metrics and outputs to wandb")
-    parser.add_argument("--cot_budget", default=700, type=int,
+    parser.add_argument("--cot_budget", default=1000, type=int,
                         help="Max new tokens for CoT reasoning in phase-1 generation")
     parser.add_argument("--batch_size", default=8, type=int,
                         help="Number of samples to process in parallel per generate call")
-    parser.add_argument("--repetition_penalty", default=1.1, type=float,
+    parser.add_argument("--repetition_penalty", default=1.4, type=float,
                         help="Repetition penalty for generation (>1.0 discourages loops; 1.3 is aggressive)")
     args = parser.parse_args()
 

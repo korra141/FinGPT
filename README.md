@@ -12,7 +12,7 @@ Two questions drive this work:
 1. **Does FinGPT Forecaster capture genuine predictive signal, or is it a proxy for sentiment analysis?**
 2. **What does the model actually rely on — financial language, or numerical price/volume data?**
 
-These questions matter because LLMs process numbers as subword tokens, not as numeric values, which fundamentally limits their ability to reason over magnitudes. Understanding where the signal comes from informs both model design and the interpretation of evaluation metrics. For a deeper treatment of tokenization and numerical representation, see [this blog post]([FILL: blog URL]).
+These questions matter because LLMs process numbers as subword tokens, not as numeric values, which fundamentally limits their ability to reason over magnitudes. Understanding where the signal comes from informs both model design and the interpretation of evaluation metrics. For a deeper treatment of tokenization and numerical representation, see [this blog post](https://korra141.github.io/#projects).
 
 ---
 
@@ -47,7 +47,7 @@ Evaluation combines three metrics:
 
 ## Implementations
 
-Beyond reproducing the original paper ([FILL: paper link]), this repo adds:
+Beyond reproducing the [original paper](https://arxiv.org/pdf/2306.06031), this repo adds:
 
 - **BERTScore evaluation** alongside ROUGE for richer text quality assessment
 - **GPT-4 inference** baseline with structured output prompting

@@ -11,11 +11,32 @@ from collections import defaultdict
 from sklearn.metrics import accuracy_score, mean_squared_error
 from utils import (
     parse_model_name, load_dataset, calc_rouge_score, calc_bert_score,
-    parse_answer_base, parse_answer, mask_numbers_in_prompt, mask_fin_words_in_prompt,
+    parse_answer_base, parse_answer,
 )
 import datasets as hf_datasets
 
 COT_END = 'assistantfinal'
+
+COT_TRIGGER = "Assistant: Let me reason through this step by step."
+
+REASONING_INSTRUCTION = (
+    "You are a financial analyst. Before giving a forecast, "
+    "reason through the available signals step by step."
+)
+
+
+def inject_reasoning_instruction(prompt: str) -> str:
+    """Insert REASONING_INSTRUCTION before [/INST] in a LLaMA-2 chat prompt."""
+    marker = '[/INST]'
+    idx = prompt.rfind(marker)
+    if idx == -1:
+        return prompt.rstrip() + '\n' + REASONING_INSTRUCTION
+    return prompt[:idx].rstrip() + '\n' + REASONING_INSTRUCTION + '\n' + marker
+
+
+def build_cot_content(cot_text: str) -> str:
+    """Assemble the full CoT content string ending with COT_END."""
+    return f"{COT_TRIGGER}\n{cot_text}\n{COT_END}"
 
 
 def extract_cot_answer(text: str) -> str:
@@ -33,11 +54,14 @@ def extract_cot_answer(text: str) -> str:
     return text.strip()
 
 
-def extract_cot_reasoning(text: str) -> str:
-    """Return only the CoT reasoning portion (between prompt end and assistantfinal)."""
-    split = re.search(r'assistantfinal', text, re.IGNORECASE)
-    if split:
-        return text[:split.start()].strip()
+def extract_generated_cot(text: str) -> str:
+    """Return the CoT reasoning the model generated (up to 'assistantfinal')."""
+    end = re.search(r'assistantfinal', text, re.IGNORECASE)
+    if end:
+        return text[:end.start()].strip()
+    fallback = re.search(r'\[Positive Developments\]', text, re.IGNORECASE)
+    if fallback:
+        return text[:fallback.start()].strip()
     return ''
 
 
@@ -110,7 +134,8 @@ def run_inference_cot(args):
 
     token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HF_USER_ACCESS_TOKEN')
 
-    model_name = parse_model_name('llama2', args.from_remote)
+    # model_name = parse_model_name('llama2', args.from_remote)
+    model_name = "meta-llama/Llama-2-7b-hf"
 
     if args.load_in_4bit:
         bnb_config = BitsAndBytesConfig(
@@ -123,10 +148,22 @@ def run_inference_cot(args):
     elif args.load_in_8bit:
         model_kwargs = dict(load_in_8bit=True)
     else:
-        model_kwargs = dict(torch_dtype=torch.float32)
+        model_kwargs = dict(torch_dtype=torch.float16)
 
     n_gpus = torch.cuda.device_count()
-    max_memory = {i: "75GiB" for i in range(n_gpus)} if n_gpus > 0 else None
+    if n_gpus > 0:
+        if args.max_memory_per_gpu:
+            max_memory = {i: args.max_memory_per_gpu for i in range(n_gpus)}
+        else:
+            # auto-detect: leave ~2 GiB headroom per GPU
+            free_mem = []
+            for i in range(n_gpus):
+                props = torch.cuda.get_device_properties(i)
+                free_mem.append(f"{int(props.total_memory / 1024**3) - 2}GiB")
+            max_memory = {i: free_mem[i] for i in range(n_gpus)}
+        print(f"Using {n_gpus} GPU(s) with max_memory={max_memory}")
+    else:
+        max_memory = None
 
     print(f"Loading base model: {model_name}")
     base_model = AutoModelForCausalLM.from_pretrained(
@@ -139,7 +176,7 @@ def run_inference_cot(args):
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, token=token)
     tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "right"
+    tokenizer.padding_side = "left"  # left-pad so all generated tokens align at the same offset
 
     if args.peft_model:
         print(f"Loading LoRA adapter: {args.peft_model}")
@@ -148,6 +185,7 @@ def run_inference_cot(args):
         print("Running base model without PEFT adapter")
         model = base_model
     model = model.eval()
+    input_device = next(model.parameters()).device
 
     dataset_list = load_dataset(args.dataset, args.from_remote)
     dataset_test = hf_datasets.concatenate_datasets([d['test'] for d in dataset_list])
@@ -155,49 +193,99 @@ def run_inference_cot(args):
     if args.num_samples > 0:
         dataset_test = dataset_test.shuffle(seed=42).select(range(min(args.num_samples, len(dataset_test))))
 
-    print(f"Running inference on {len(dataset_test)} samples...")
+    print(f"Running inference on {len(dataset_test)} samples (batch_size={args.batch_size})...")
 
     generated_texts, cot_texts, reference_texts, prompt_texts = [], [], [], []
 
-    for feature in tqdm(dataset_test):
-        prompt = feature['prompt']
-        if args.mask_numbers:
-            prompt = mask_numbers_in_prompt(prompt)
-        if args.mask_fin_words:
-            prompt = mask_fin_words_in_prompt(prompt)
-        gt = feature['answer']
+    samples = list(dataset_test)
+    for batch_start in tqdm(range(0, len(samples), args.batch_size)):
+        batch = samples[batch_start:batch_start + args.batch_size]
+        raw_prompts = [s['prompt'] for s in batch]
+        gts = [s['answer'] for s in batch]
 
-        inputs = tokenizer(
-            prompt, return_tensors='pt',
-            padding=False, max_length=args.max_length, truncation=True
+        # Phase 1: generate CoT for all samples in the batch
+        phase1_prompts = [
+            inject_reasoning_instruction(p) + ' ' + COT_TRIGGER
+            for p in raw_prompts
+        ]
+        enc1 = tokenizer(
+            phase1_prompts, return_tensors='pt',
+            padding=True, truncation=True, max_length=args.max_length,
         )
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        in_len1 = enc1['input_ids'].shape[1]
+        enc1 = {k: v.to(input_device) for k, v in enc1.items()}
 
         with torch.no_grad():
-            res = model.generate(
-                **inputs,
-                max_new_tokens=args.max_new_tokens,
-                use_cache=True,
-                do_sample=False,
-                temperature=None,
-                top_p=None,
+            out1 = model.generate(
+                **enc1, use_cache=True,
+                max_new_tokens=args.cot_budget,
+                do_sample=False, temperature=None, top_p=None,
+                repetition_penalty=args.repetition_penalty,
                 pad_token_id=tokenizer.eos_token_id,
             )
-        full_output = tokenizer.decode(res[0], skip_special_tokens=True)
 
-        # Strip the prompt prefix to get only the model's generation
-        if output_startswith_prompt(full_output, prompt):
-            raw_generation = full_output[len(prompt):].strip()
-        else:
-            raw_generation = full_output.strip()
+        # With left-padding, generated tokens start at in_len1 for every sample
+        cot_texts_batch = []
+        for i in range(len(batch)):
+            cot_raw = tokenizer.decode(out1[i][in_len1:], skip_special_tokens=True).strip()
+            for _stop in ('[INST]', '<<SYS>>', '<s>'):
+                _idx = cot_raw.find(_stop)
+                if _idx != -1:
+                    cot_raw = cot_raw[:_idx].strip()
+            cot_texts_batch.append(cot_raw)
 
-        cot_part = extract_cot_reasoning(raw_generation)
-        answer = extract_cot_answer(raw_generation)
+        # Phase 2: only for samples where CoT didn't close itself
+        needs_phase2 = [
+            (i, phase1_prompts[i], cot_texts_batch[i])
+            for i in range(len(batch))
+            if COT_END.lower() not in cot_texts_batch[i].lower()
+        ]
 
-        generated_texts.append(answer)
-        cot_texts.append(cot_part)
-        reference_texts.append(gt)
-        prompt_texts.append(prompt)
+        phase2_answers = {}
+        if needs_phase2:
+            phase2_prompts = [
+                p1 + ' ' + ct + '\n' + COT_END + '\n'
+                for _, p1, ct in needs_phase2
+            ]
+            enc2 = tokenizer(
+                phase2_prompts, return_tensors='pt',
+                padding=True, truncation=True, max_length=args.max_length,
+            )
+            in_len2 = enc2['input_ids'].shape[1]
+            enc2 = {k: v.to(input_device) for k, v in enc2.items()}
+
+            with torch.no_grad():
+                out2 = model.generate(
+                    **enc2, use_cache=True,
+                    max_new_tokens=args.max_new_tokens,
+                    do_sample=False, temperature=None, top_p=None,
+                    repetition_penalty=args.repetition_penalty,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+
+            for j, (orig_i, _, _ct) in enumerate(needs_phase2):
+                answer_raw = tokenizer.decode(out2[j][in_len2:], skip_special_tokens=True).strip()
+                for _stop in ('[INST]', '<<SYS>>', '<s>'):
+                    _idx = answer_raw.find(_stop)
+                    if _idx != -1:
+                        answer_raw = answer_raw[:_idx].strip()
+                phase2_answers[orig_i] = answer_raw
+
+        # Assemble results for this batch
+        for i in range(len(batch)):
+            ct = cot_texts_batch[i]
+            if i in phase2_answers:
+                raw_generation = ct + '\n' + COT_END + '\n' + phase2_answers[i]
+            else:
+                raw_generation = ct
+
+            cot_part = extract_generated_cot(raw_generation)
+            answer = extract_cot_answer(raw_generation)
+
+            generated_texts.append(answer)
+            cot_texts.append(cot_part)
+            reference_texts.append(gts[i])
+            prompt_texts.append(raw_prompts[i])
 
     # Try strict bracketed parser first, fall back to lenient
     parsed_answers = [parse_answer(g) or parse_answer_base(g) for g in generated_texts]
@@ -244,8 +332,7 @@ def run_inference_cot(args):
             max_new_tokens=args.max_new_tokens,
             load_in_4bit=args.load_in_4bit,
             load_in_8bit=args.load_in_8bit,
-            mask_numbers=args.mask_numbers,
-            mask_fin_words=args.mask_fin_words,
+            batch_size=args.batch_size,
         )
         wandb.init(project='fingpt-forecaster', name=args.run_name, config=run_config)
         wandb.log(metrics)
@@ -255,11 +342,6 @@ def run_inference_cot(args):
         wandb.finish()
 
     return metrics
-
-
-def output_startswith_prompt(output: str, prompt: str) -> bool:
-    """Check if the decoded output starts with the prompt (handles minor whitespace drift)."""
-    return output[:len(prompt)].strip() == prompt.strip()
 
 
 if __name__ == "__main__":
@@ -280,11 +362,15 @@ if __name__ == "__main__":
     parser.add_argument("--hf_token", default=None, type=str, help="HuggingFace API token (or set HF_TOKEN env var)")
     parser.add_argument("--load_in_4bit", action="store_true")
     parser.add_argument("--load_in_8bit", action="store_true")
-    parser.add_argument("--mask_numbers", action="store_true",
-                        help="Replace numbers in prompts with [NUM]")
-    parser.add_argument("--mask_fin_words", action="store_true",
-                        help="Replace financial directional words in prompts with [WORD]")
+    parser.add_argument("--max_memory_per_gpu", default="80GiB", type=str,
+                        help="Max memory per GPU, e.g. '40GiB'. If unset, auto-detected from GPU total memory.")
     parser.add_argument("--wandb", action="store_true", help="Log metrics and outputs to wandb")
+    parser.add_argument("--cot_budget", default=700, type=int,
+                        help="Max new tokens for CoT reasoning in phase-1 generation")
+    parser.add_argument("--batch_size", default=8, type=int,
+                        help="Number of samples to process in parallel per generate call")
+    parser.add_argument("--repetition_penalty", default=1.1, type=float,
+                        help="Repetition penalty for generation (>1.0 discourages loops; 1.3 is aggressive)")
     args = parser.parse_args()
 
     run_inference_cot(args)

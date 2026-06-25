@@ -1,5 +1,6 @@
 import re
 import os
+import random
 import datasets
 from sklearn.metrics import accuracy_score, mean_squared_error
 from collections import defaultdict
@@ -62,6 +63,44 @@ FINANCIAL_WORD_RE = re.compile(
 
 def mask_numbers_in_prompt(prompt: str, mask_token: str = '[NUM]') -> str:
     return NUMBER_RE.sub(mask_token, prompt)
+
+
+def _randomize_number(match: re.Match) -> str:
+    """Replace a matched number with a random one of the same format and magnitude."""
+    s = match.group()
+    prefix, suffix, inner = '', '', s
+
+    if inner and inner[0] in '+-$':
+        prefix, inner = inner[0], inner[1:]
+    if inner.endswith('%'):
+        suffix, inner = '%', inner[:-1]
+
+    has_commas = ',' in inner
+    if '.' in inner:
+        int_str, dec_str = inner.rsplit('.', 1)
+        n_dec = len(dec_str)
+    else:
+        int_str, n_dec = inner, 0
+
+    n_digits = max(len(int_str.replace(',', '')), 1)
+    rand_int = random.randint(10 ** (n_digits - 1), 10 ** n_digits - 1) if n_digits > 1 else random.randint(0, 9)
+    rand_int_str = f'{rand_int:,}' if has_commas else str(rand_int)
+
+    if n_dec:
+        rand_dec = random.randint(0, 10 ** n_dec - 1)
+        result = f'{rand_int_str}.{rand_dec:0{n_dec}d}'
+    else:
+        result = rand_int_str
+
+    return prefix + result + suffix
+
+
+def randomize_numbers_in_prompt(prompt: str, seed: int = None) -> str:
+    """Replace each number in the prompt with a random plausible number of the
+    same format (sign, currency, percent, magnitude, decimal precision)."""
+    if seed is not None:
+        random.seed(seed)
+    return NUMBER_RE.sub(_randomize_number, prompt)
 
 
 def mask_fin_words_in_prompt(prompt: str, mask_token: str = '[FIN]') -> str:

@@ -11,11 +11,18 @@ from collections import defaultdict
 from sklearn.metrics import accuracy_score, mean_squared_error
 from utils import (
     parse_model_name, load_dataset, calc_rouge_score, calc_bert_score,
-    parse_answer_base, parse_answer, mask_numbers_in_prompt, mask_fin_words_in_prompt,
+    parse_answer_base, parse_answer,
 )
 import datasets as hf_datasets
 
 COT_END = 'assistantfinal'
+
+COT_TRIGGER = "Assistant: Let me reason through this step by step."
+
+REASONING_INSTRUCTION = (
+    "You are a financial analyst. Before giving a forecast, "
+    "reason through the available signals step by step."
+)
 
 LLAMA2_SYS_RE = re.compile(
     r'\[INST\]<<SYS>>\n(.*?)\n<</SYS>>\n\n(.*?)\[/INST\]',
@@ -23,14 +30,35 @@ LLAMA2_SYS_RE = re.compile(
 )
 
 
-def build_llama3_prompt(tokenizer, raw_prompt: str) -> str:
-    """Convert a Llama2-format prompt to a Llama3 chat-template prompt."""
+def inject_reasoning_instruction(prompt: str) -> str:
+    """Insert REASONING_INSTRUCTION before [/INST] in a LLaMA-2 chat prompt."""
+    marker = '[/INST]'
+    idx = prompt.rfind(marker)
+    if idx == -1:
+        return prompt.rstrip() + '\n' + REASONING_INSTRUCTION
+    return prompt[:idx].rstrip() + '\n' + REASONING_INSTRUCTION + '\n' + marker
+
+
+def build_cot_assistant_content(cot_text: str) -> str:
+    """Assemble the full assistant CoT content string ending with COT_END."""
+    return f"{COT_TRIGGER}\n{cot_text}\n{COT_END}"
+
+
+def build_llama3_prompt(tokenizer, raw_prompt: str, assistant_content: str = None) -> str:
+    """Convert a Llama2-format prompt to a Llama3 chat-template prompt.
+
+    If assistant_content is provided it is included as an assistant-role
+    message (e.g. the full CoT block ending with COT_END), and
+    add_generation_prompt=True appends the header for the next assistant turn.
+    """
     m = LLAMA2_SYS_RE.search(raw_prompt)
     if m:
         messages = [
             {"role": "system", "content": m.group(1).strip()},
             {"role": "user",   "content": m.group(2).strip()},
         ]
+        if assistant_content is not None:
+            messages.append({"role": "assistant", "content": assistant_content})
         return tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True,
         )
@@ -52,11 +80,14 @@ def extract_cot_answer(text: str) -> str:
     return text.strip()
 
 
-def extract_cot_reasoning(text: str) -> str:
-    """Return only the CoT reasoning portion (between prompt end and assistantfinal)."""
-    split = re.search(r'assistantfinal', text, re.IGNORECASE)
-    if split:
-        return text[:split.start()].strip()
+def extract_generated_cot(text: str) -> str:
+    """Return the CoT reasoning the model generated (up to 'assistantfinal')."""
+    end = re.search(r'assistantfinal', text, re.IGNORECASE)
+    if end:
+        return text[:end.start()].strip()
+    fallback = re.search(r'\[Positive Developments\]', text, re.IGNORECASE)
+    if fallback:
+        return text[:fallback.start()].strip()
     return ''
 
 
@@ -145,7 +176,7 @@ def run_inference_cot(args):
         model_kwargs = dict(torch_dtype=torch.float32)
 
     n_gpus = torch.cuda.device_count()
-    max_memory = {i: "75GiB" for i in range(n_gpus)} if n_gpus > 0 else None
+    max_memory = {i: "78GiB" for i in range(n_gpus)} if n_gpus > 0 else None
 
     print(f"Loading base model: {model_name}")
     base_model = AutoModelForCausalLM.from_pretrained(
@@ -167,6 +198,8 @@ def run_inference_cot(args):
         print("Running base model without PEFT adapter")
         model = base_model
     model = model.eval()
+    # With device_map="auto", layers are spread across GPUs; inputs must go to the first device.
+    input_device = next(model.parameters()).device
 
     dataset_list = load_dataset(args.dataset, args.from_remote)
     dataset_test = hf_datasets.concatenate_datasets([d['test'] for d in dataset_list])
@@ -180,40 +213,66 @@ def run_inference_cot(args):
 
     for feature in tqdm(dataset_test):
         raw_prompt = feature['prompt']
-        if args.mask_numbers:
-            raw_prompt = mask_numbers_in_prompt(raw_prompt)
-        if args.mask_fin_words:
-            raw_prompt = mask_fin_words_in_prompt(raw_prompt)
         gt = feature['answer']
 
-        # <-- convert Llama-2 dataset prompt to Llama-3 chat template
-        llama3_prompt = build_llama3_prompt(tokenizer, raw_prompt)
-
-        inputs = tokenizer(
-            llama3_prompt, return_tensors='pt',  # <-- encode the converted prompt
-            padding=False, max_length=args.max_length, truncation=True
+        # Phase 1: prime with COT_TRIGGER, generate CoT reasoning
+        phase1_prompt = (
+            build_llama3_prompt(tokenizer, inject_reasoning_instruction(raw_prompt))
+            + ' ' + COT_TRIGGER
         )
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        enc1 = tokenizer(
+            phase1_prompt, return_tensors='pt',
+            padding=False, max_length=args.max_length, truncation=True,
+        )
+        enc1 = {k: v.to(input_device) for k, v in enc1.items()}
+        in_len1 = enc1['input_ids'].shape[1]
 
         with torch.no_grad():
-            res = model.generate(
-                **inputs,
-                max_new_tokens=args.max_new_tokens,
-                use_cache=True,
-                do_sample=False,
-                temperature=None,
-                top_p=None,
+            out1 = model.generate(
+                **enc1, use_cache=True,
+                max_new_tokens=args.cot_budget,
+                do_sample=False, temperature=None, top_p=None,
+                repetition_penalty=1.1,
                 pad_token_id=tokenizer.eos_token_id,
             )
-        full_output = tokenizer.decode(res[0], skip_special_tokens=True)
+        cot_text = tokenizer.decode(out1[0][in_len1:], skip_special_tokens=True).strip()
 
-        # <-- strip using the converted llama3_prompt, not raw_prompt
-        if output_startswith_prompt(full_output, llama3_prompt):
-            raw_generation = full_output[len(llama3_prompt):].strip()
+        for _stop in ('<|eot_id|>', '<|start_header_id|>', '<|end_header_id|>'):
+            _idx = cot_text.find(_stop)
+            if _idx != -1:
+                cot_text = cot_text[:_idx].strip()
+
+        # Phase 2: if CoT didn't close itself, force COT_END then generate the answer
+        if COT_END.lower() not in cot_text.lower():
+            phase2_prompt = build_llama3_prompt(
+                tokenizer,
+                inject_reasoning_instruction(raw_prompt),
+                assistant_content=build_cot_assistant_content(cot_text),
+            )
+            enc2 = tokenizer(
+                phase2_prompt, return_tensors='pt',
+                padding=False, max_length=args.max_length, truncation=True,
+            )
+            enc2 = {k: v.to(input_device) for k, v in enc2.items()}
+            in_len2 = enc2['input_ids'].shape[1]
+            with torch.no_grad():
+                out2 = model.generate(
+                    **enc2, use_cache=True,
+                    max_new_tokens=args.max_new_tokens,
+                    do_sample=False, temperature=None, top_p=None,
+                    repetition_penalty=1.1,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+            answer_text = tokenizer.decode(out2[0][in_len2:], skip_special_tokens=True).strip()
+            for _stop in ('<|eot_id|>', '<|start_header_id|>', '<|end_header_id|>'):
+                _idx = answer_text.find(_stop)
+                if _idx != -1:
+                    answer_text = answer_text[:_idx].strip()
+            raw_generation = cot_text + '\n' + COT_END + '\n' + answer_text
         else:
-            raw_generation = full_output.strip()
+            raw_generation = cot_text
 
-        cot_part = extract_cot_reasoning(raw_generation)
+        cot_part = extract_generated_cot(raw_generation)
         answer = extract_cot_answer(raw_generation)
 
         generated_texts.append(answer)
@@ -265,8 +324,6 @@ def run_inference_cot(args):
             max_new_tokens=args.max_new_tokens,
             load_in_4bit=args.load_in_4bit,
             load_in_8bit=args.load_in_8bit,
-            mask_numbers=args.mask_numbers,
-            mask_fin_words=args.mask_fin_words,
         )
         wandb.init(project='fingpt-forecaster', name=args.run_name, config=run_config)
         wandb.log(metrics)
@@ -276,11 +333,6 @@ def run_inference_cot(args):
         wandb.finish()
 
     return metrics
-
-
-def output_startswith_prompt(output: str, prompt: str) -> bool:
-    """Check if the decoded output starts with the prompt (handles minor whitespace drift)."""
-    return output[:len(prompt)].strip() == prompt.strip()
 
 
 if __name__ == "__main__":
@@ -301,11 +353,9 @@ if __name__ == "__main__":
     parser.add_argument("--hf_token", default=None, type=str, help="HuggingFace API token (or set HF_TOKEN env var)")
     parser.add_argument("--load_in_4bit", action="store_true")
     parser.add_argument("--load_in_8bit", action="store_true")
-    parser.add_argument("--mask_numbers", action="store_true",
-                        help="Replace numbers in prompts with [NUM]")
-    parser.add_argument("--mask_fin_words", action="store_true",
-                        help="Replace financial directional words in prompts with [WORD]")
     parser.add_argument("--wandb", action="store_true", help="Log metrics and outputs to wandb")
+    parser.add_argument("--cot_budget", default=700, type=int,
+                        help="Max new tokens for CoT reasoning in phase-1 generation")
     args = parser.parse_args()
 
     run_inference_cot(args)

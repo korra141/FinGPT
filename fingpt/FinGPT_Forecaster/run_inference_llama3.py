@@ -10,7 +10,7 @@ import json
 import argparse
 import wandb
 from tqdm import tqdm
-from utils import parse_model_name, load_dataset, calc_metrics, calc_rouge_score, calc_bert_score, parse_answer, parse_answer_base, mask_numbers_in_prompt, mask_fin_words_in_prompt
+from utils import parse_model_name, load_dataset, calc_metrics, calc_rouge_score, calc_bert_score, parse_answer, parse_answer_base, mask_numbers_in_prompt, mask_fin_words_in_prompt, randomize_numbers_in_prompt
 from collections import defaultdict
 from sklearn.metrics import accuracy_score, mean_squared_error
 
@@ -202,6 +202,8 @@ def run_inference(args):
         raw_prompt = feature['prompt']
         if args.mask_numbers:
             raw_prompt = mask_numbers_in_prompt(raw_prompt)
+        elif args.randomize_numbers:
+            raw_prompt = randomize_numbers_in_prompt(raw_prompt)
         if args.mask_fin_words:
             raw_prompt = mask_fin_words_in_prompt(raw_prompt)
         gt = feature['answer']
@@ -345,6 +347,8 @@ if __name__ == "__main__":
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--mask_numbers", action="store_true",
                         help="Replace all numbers (and surrounding ±$%%) in prompts with [NUM]")
+    parser.add_argument("--randomize_numbers", action="store_true",
+                        help="Replace all numbers in prompts with random plausible values (ablation)")
     parser.add_argument("--mask_fin_words", action="store_true",
                         help="Replace financial directional words (increase, surge, bullish, ...) in prompts with [FIN]")
     args = parser.parse_args()

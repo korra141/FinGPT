@@ -14,7 +14,7 @@ import argparse
 from datetime import datetime
 from functools import partial
 from tqdm import tqdm
-from utils import lora_module_dict, parse_model_name, load_dataset, calc_metrics
+from utils import lora_module_dict, parse_model_name, load_dataset, calc_metrics, tokenize
 
 from peft import (
     TaskType,
@@ -250,22 +250,63 @@ class CotTrainer(Trainer):
         outputs = model(**inputs)
         loss    = outputs.loss
 
-        # Accumulate segment losses from the same logits — no extra forward pass.
         if model.training and cot_labels is not None and outputs.logits is not None:
             logits = outputs.logits
-            # Causal-LM shift: predict token[i+1] from position i
-            shift_logits = logits[:, :-1, :].contiguous().view(-1, logits.size(-1))
+            shift_logits = logits[:, :-1, :].contiguous()
             loss_fct = torch.nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
 
             cot_shift    = cot_labels[:, 1:].contiguous().view(-1)
             answer_shift = answer_labels[:, 1:].contiguous().view(-1)
 
             if (cot_shift != IGNORE_INDEX).any():
-                self._cot_sum    += loss_fct(shift_logits, cot_shift).item()
-                self._answer_sum += loss_fct(shift_logits, answer_shift).item()
+                self._cot_sum    += loss_fct(shift_logits.view(-1, logits.size(-1)), cot_shift).item()
+                self._answer_sum += loss_fct(shift_logits.view(-1, logits.size(-1)), answer_shift).item()
                 self._seg_n      += 1
 
+                # Unlikelihood loss: penalise tokens in the CoT segment that have
+                # already appeared earlier in the same sequence (window = 32 tokens).
+                # Operates position-by-position over the CoT span only.
+                ul_loss = self._unlikelihood_loss(shift_logits, cot_labels, window=32)
+                if ul_loss is not None:
+                    loss = loss + 0.1 * ul_loss
+
         return (loss, outputs) if return_outputs else loss
+
+    @staticmethod
+    def _unlikelihood_loss(shift_logits, cot_labels, window=32):
+        """
+        For each CoT position, collect tokens seen in the preceding `window`
+        positions and push their probability down with an unlikelihood term.
+        shift_logits: (B, T-1, V)  cot_labels: (B, T)
+        """
+        B, T_minus1, V = shift_logits.shape
+        cot_mask = (cot_labels[:, 1:] != IGNORE_INDEX)  # (B, T-1)
+        if not cot_mask.any():
+            return None
+
+        input_ids = cot_labels  # (B, T) — tokens present in the full sequence
+        log_probs = torch.nn.functional.log_softmax(shift_logits, dim=-1)  # (B, T-1, V)
+
+        ul_terms = []
+        for b in range(B):
+            for t in range(T_minus1):
+                if not cot_mask[b, t]:
+                    continue
+                start = max(0, t - window)
+                # tokens seen in the window before position t
+                ctx = input_ids[b, start:t]
+                ctx = ctx[ctx != IGNORE_INDEX]
+                if ctx.numel() == 0:
+                    continue
+                # clamp to valid vocab range
+                ctx = ctx.clamp(0, V - 1)
+                # 1 - p(token) for each repeated token; average over them
+                repeated_log_probs = log_probs[b, t][ctx]
+                ul_terms.append(torch.log(1 - repeated_log_probs.exp().clamp(max=1 - 1e-7)).mean())
+
+        if not ul_terms:
+            return None
+        return -torch.stack(ul_terms).mean()
 
     def log(self, logs, **kwargs):
         if self._seg_n > 0 and 'loss' in logs:
@@ -317,6 +358,7 @@ class GenerationEvalCallback(TrainerCallback):
                     **enc1, use_cache=True,
                     max_new_tokens=self.cot_budget,
                     do_sample=False, temperature=None, top_p=None,
+                    repetition_penalty=1.1,
                     pad_token_id=tokenizer.eos_token_id,
                 )
             cot_tokens = out1[0][in_len1:]
@@ -350,6 +392,7 @@ class GenerationEvalCallback(TrainerCallback):
                         **enc2, use_cache=True,
                         max_new_tokens=512,
                         do_sample=False, temperature=None, top_p=None,
+                        repetition_penalty=1.1,
                         pad_token_id=tokenizer.eos_token_id,
                     )
                 answer_text = tokenizer.decode(out2[0][in_len2:], skip_special_tokens=True).strip()
@@ -406,8 +449,6 @@ def load_local_dataset(path):
     """Load a DatasetDict saved with save_to_disk (e.g. chatgpt_cot/).
     Returns a one-element list to match the format expected by the caller."""
     ds = datasets.load_from_disk(path)
-    if 'train' not in ds or 'test' not in ds:
-        raise ValueError(f"{path} must contain 'train' and 'test' splits, found: {list(ds.keys())}")
     return ds
 
 
@@ -501,19 +542,21 @@ def main(args):
         print(f"There is not cot dataset at {args.cot_dataset}. Please provide a valid path to a local dataset saved with save_to_disk, or specify a HuggingFace Hub dataset identifier.")
         sys.exit(1)
     
-    cot_dataset_train = extract_cot_reasoning(cot_dataset['train'])
-    cot_dataset_test =  extract_cot_reasoning(cot_dataset['test'])
-
-    if args.dataset:
-        dataset_ = load_dataset(args.dataset, True)[0]
-
-    cot_subset_train = cot_dataset_train.select_columns(['cot_reasoning'])
-    cot_subset_test = cot_dataset_test.select_columns(['cot_reasoning'])
+    cot_dataset_train = extract_cot_reasoning(cot_dataset)
 
     
-    dataset_train_untoken = datasets.concatenate_datasets([dataset_['train'], cot_subset_train],axis=1 ).shuffle(seed=42)
+    dataset_ = load_dataset(args.dataset, True)[0]
 
-    dataset_test_untoken = datasets.concatenate_datasets([dataset_['test'], cot_subset_test],axis=1 )
+    cot_subset_train = cot_dataset_train.select_columns(['cot_reasoning'])
+
+    n_train = min(len(dataset_['train']), len(cot_subset_train))
+    dataset_train_untoken = datasets.concatenate_datasets(
+        [dataset_['train'].select(range(n_train)), cot_subset_train.select(range(n_train))], axis=1
+    ).shuffle(seed=42)
+
+    # Evaluation always uses the held-out dow30 test split from HuggingFace,
+    # independent of the CoT training dataset.
+    dataset_test_untoken = dataset_['test']
 
     tokenize_fn = partial(tokenize_cot, args, tokenizer)
 
@@ -527,7 +570,9 @@ def main(args):
         })
 
     dataset_train = build_dataset(dataset_train_untoken)
-    dataset_test  = build_dataset(dataset_test_untoken)
+
+    dataset_test = build_dataset(dataset_test_untoken)
+    
 
     if local_rank == 0:
         log_sample_inputs(tokenizer, dataset_train)
@@ -550,6 +595,7 @@ def main(args):
         save_steps=args.eval_steps,
         eval_steps=args.eval_steps,
         fp16=True,
+        label_smoothing_factor=0.1,
         evaluation_strategy=args.evaluation_strategy,
         remove_unused_columns=False,
         report_to='wandb',

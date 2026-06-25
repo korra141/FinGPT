@@ -36,14 +36,14 @@ torchrun \
   train_lora_cot.py \
   --run_name dow30-llama2-cot-4bit\
   --base_model llama2 \
-  --cot_dataset chatgpt_cot \
+  --cot_dataset cot_dow_dataset \
   --dataset dow30-202305-202405 \
-  --max_length 4096 \
+  --max_length 5000 \
   --load_in_4bit \
   --batch_size 4 \
   --gradient_accumulation_steps 4 \
   --learning_rate 1e-5 \
-  --num_epochs 30 \
+  --num_epochs 40 \
   --log_interval 10 \
   --warmup_ratio 0.03 \
   --scheduler constant \

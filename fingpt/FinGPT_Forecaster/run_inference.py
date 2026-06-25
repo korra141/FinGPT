@@ -12,6 +12,7 @@ from sklearn.metrics import accuracy_score, mean_squared_error
 from utils import (
     parse_model_name, load_dataset, calc_rouge_score, calc_bert_score,
     parse_answer_base, parse_answer, mask_numbers_in_prompt, mask_fin_words_in_prompt,
+    randomize_numbers_in_prompt,
 )
 import datasets as hf_datasets
 
